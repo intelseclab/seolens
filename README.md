@@ -157,7 +157,7 @@ Contributions are welcome! Feel free to:
 
 ```bash
 # Clone the repo
-git clone https://github.com/faikcelik/seo-lens-extension.git
+git clone https://github.com/faikcelik/seolens.git
 
 # Load in Chrome (no build step required — pure HTML/CSS/JS)
 # chrome://extensions/ → Load unpacked → select folder
