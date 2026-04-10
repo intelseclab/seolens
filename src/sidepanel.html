@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SEO Lens</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600;1,400&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --bg:#0d0f14;--bg2:#13161e;--bg3:#1a1e28;
+    --border:#252a38;--border2:#2e3548;
+    --accent:#00e5c0;--accent2:#7c6aff;
+    --warn:#ffd166;--danger:#ff6b6b;--success:#00e5c0;
+    --text:#e8eaf0;--text2:#8892a4;--text3:#525d72;
+    --mono:'Space Mono',monospace;--sans:'DM Sans',sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:13px;line-height:1.5;width:100%;min-width:320px;min-height:100vh;overflow-x:hidden;}
+
+  /* ─── HEADER ─── */
+  .header{position:sticky;top:0;z-index:100;background:var(--bg);border-bottom:1px solid var(--border);padding:10px 14px;display:flex;align-items:center;gap:8px;}
+  .logo{width:28px;height:28px;background:linear-gradient(135deg,var(--accent),var(--accent2));border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;}
+  .header-text h1{font-family:var(--mono);font-size:12px;font-weight:700;color:var(--text);letter-spacing:0.5px;}
+  .header-text p{font-size:10px;color:var(--text3);}
+  .export-btn{margin-left:auto;background:var(--bg3);border:1px solid var(--border);color:var(--text2);border-radius:7px;width:30px;height:30px;font-size:13px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all 0.2s;flex-shrink:0;}
+  .export-btn:hover{background:var(--border2);color:var(--text);}
+  .scan-btn{background:var(--accent);color:#000;border:none;border-radius:7px;padding:6px 13px;font-family:var(--mono);font-size:11px;font-weight:700;cursor:pointer;letter-spacing:0.5px;transition:all 0.2s;white-space:nowrap;flex-shrink:0;}
+  .scan-btn:hover{background:#00c9a8;transform:translateY(-1px);}
+  .scan-btn.loading{background:var(--bg3);color:var(--text2);cursor:default;transform:none;}
+
+  /* ─── SCORE BAR ─── */
+  .score-bar{background:var(--bg2);border-bottom:1px solid var(--border);padding:12px 16px;display:none;}
+  .score-bar.visible{display:block;}
+  .score-row{display:flex;align-items:center;gap:12px;}
+  .score-circle{width:54px;height:54px;flex-shrink:0;border-radius:50%;background:conic-gradient(var(--accent) 0deg,var(--bg3) 0deg);display:flex;align-items:center;justify-content:center;position:relative;}
+  .score-circle::after{content:'';position:absolute;inset:6px;background:var(--bg2);border-radius:50%;}
+  .score-num{position:relative;z-index:1;font-family:var(--mono);font-size:15px;font-weight:700;color:var(--text);}
+  .score-info h2{font-size:14px;font-weight:600;color:var(--text);}
+  .score-info p{font-size:11px;color:var(--text2);margin-top:2px;}
+  .score-tags{display:flex;flex-wrap:wrap;gap:4px;margin-top:8px;}
+  .tag{display:inline-flex;align-items:center;gap:3px;padding:2px 7px;border-radius:4px;font-size:10px;font-weight:600;letter-spacing:0.3px;font-family:var(--mono);}
+  .tag.good{background:rgba(0,229,192,0.1);color:var(--success);}
+  .tag.warn{background:rgba(255,209,102,0.1);color:var(--warn);}
+  .tag.bad{background:rgba(255,107,107,0.1);color:var(--danger);}
+  .cat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:5px;margin-top:8px;}
+  .cat-item{background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:5px 6px;text-align:center;}
+  .cat-item .ci-val{font-family:var(--mono);font-size:14px;font-weight:700;}
+  .cat-item .ci-label{font-size:9px;color:var(--text3);font-family:var(--mono);letter-spacing:0.3px;margin-top:1px;}
+
+  /* ─── TABS ─── */
+  .tabs{display:flex;border-bottom:1px solid var(--border);background:var(--bg);position:sticky;top:54px;z-index:99;overflow-x:auto;scrollbar-width:thin;scrollbar-color:var(--border2) transparent;}
+  .tabs::-webkit-scrollbar{height:3px;}
+  .tabs::-webkit-scrollbar-track{background:transparent;}
+  .tabs::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px;}
+  .tab{flex-shrink:0;padding:7px 5px;font-size:9px;font-weight:600;font-family:var(--mono);color:var(--text3);border:none;background:none;cursor:pointer;border-bottom:2px solid transparent;transition:all 0.2s;white-space:nowrap;letter-spacing:0.3px;display:flex;flex-direction:column;align-items:center;gap:2px;min-width:34px;}
+  .tab .tab-icon{font-size:12px;}
+  .tab:hover{color:var(--text2);}
+  .tab.active{color:var(--accent);border-bottom-color:var(--accent);}
+
+  /* ─── PANELS ─── */
+  .panels{padding:0 0 40px;}
+  .panel{display:none;}
+  .panel.active{display:block;}
+  .empty-state{padding:44px 24px;text-align:center;}
+  .empty-state .icon{font-size:38px;margin-bottom:12px;}
+  .empty-state h3{font-size:14px;color:var(--text);margin-bottom:6px;}
+  .empty-state p{font-size:12px;color:var(--text2);line-height:1.6;}
+
+  /* ─── SECTIONS ─── */
+  .section{border-bottom:1px solid var(--border);padding:12px 14px;}
+  .section-header{display:flex;align-items:center;gap:8px;margin-bottom:8px;cursor:pointer;user-select:none;}
+  .section-header h3{font-size:10px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:1px;font-family:var(--mono);}
+  .section-header .badge{margin-left:auto;font-size:10px;padding:1px 7px;border-radius:10px;font-family:var(--mono);font-weight:700;}
+  .section-header .chevron{font-size:10px;color:var(--text3);transition:transform 0.2s;}
+  .section.collapsed .section-body{display:none;}
+  .section.collapsed .chevron{transform:rotate(-90deg);}
+
+  /* ─── ROWS ─── */
+  .row{display:flex;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);align-items:flex-start;}
+  .row:last-child{border-bottom:none;}
+  .row-body{flex:1;min-width:0;}
+  .row-label{font-size:11px;color:var(--text2);margin-bottom:2px;}
+  .row-value{font-size:12px;color:var(--text);word-break:break-word;}
+  .row-value.missing{color:var(--text3);font-style:italic;}
+  .row-value.danger{color:var(--danger);}
+  .row-value.warn{color:var(--warn);}
+  .row-value.success{color:var(--success);}
+  .char-bar{height:3px;border-radius:2px;background:var(--border2);margin-top:4px;overflow:hidden;}
+  .char-bar-fill{height:100%;border-radius:2px;transition:width 0.4s;}
+
+  /* ─── METRIC CARDS ─── */
+  .metric-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px;padding:2px 0;}
+  .metric-card{background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:9px 11px;}
+  .metric-card .m-label{font-size:9px;color:var(--text3);margin-bottom:3px;font-family:var(--mono);letter-spacing:0.3px;}
+  .metric-card .m-val{font-size:20px;font-weight:700;font-family:var(--mono);color:var(--text);line-height:1;}
+  .metric-card .m-unit{font-size:11px;color:var(--text2);margin-left:2px;}
+  .metric-card .m-status{font-size:10px;margin-top:3px;font-family:var(--mono);}
+  .metric-card.good{border-color:rgba(0,229,192,0.25);}
+  .metric-card.warn{border-color:rgba(255,209,102,0.25);}
+  .metric-card.bad{border-color:rgba(255,107,107,0.25);}
+
+  /* ─── ISSUE ITEMS ─── */
+  .issue-item{display:flex;gap:8px;align-items:flex-start;padding:6px 0;border-bottom:1px solid var(--border);}
+  .issue-item:last-child{border-bottom:none;}
+  .issue-icon{font-size:13px;flex-shrink:0;margin-top:1px;}
+  .issue-body{flex:1;}
+  .issue-title{font-size:12px;font-weight:500;color:var(--text);}
+  .issue-desc{font-size:11px;color:var(--text2);margin-top:2px;}
+
+  /* ─── HEADING TREE ─── */
+  .heading-item{display:flex;align-items:flex-start;gap:8px;padding:5px 0;border-bottom:1px solid var(--border);}
+  .heading-item:last-child{border-bottom:none;}
+  .h-tag{flex-shrink:0;font-family:var(--mono);font-size:10px;font-weight:700;padding:1px 5px;border-radius:3px;min-width:24px;text-align:center;}
+  .h-tag.h1{background:rgba(0,229,192,0.15);color:var(--success);}
+  .h-tag.h2{background:rgba(124,106,255,0.15);color:var(--accent2);}
+  .h-tag.h3{background:rgba(255,209,102,0.12);color:var(--warn);}
+  .h-tag.h4,.h-tag.h5,.h-tag.h6{background:var(--bg3);color:var(--text3);}
+  .h-text{font-size:12px;color:var(--text);flex:1;min-width:0;word-break:break-word;}
+
+  /* ─── TECH CHECKS ─── */
+  .tech-check{display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--border);}
+  .tech-check:last-child{border-bottom:none;}
+  .tc-icon{font-size:14px;flex-shrink:0;}
+  .tc-label{flex:1;font-size:12px;color:var(--text);}
+  .tc-sub{font-size:10px;color:var(--text3);margin-top:1px;word-break:break-all;}
+  .tc-badge{font-size:10px;padding:2px 7px;border-radius:10px;font-family:var(--mono);font-weight:700;flex-shrink:0;}
+  .tc-badge.ok{background:rgba(0,229,192,0.1);color:var(--success);}
+  .tc-badge.fail{background:rgba(255,107,107,0.1);color:var(--danger);}
+  .tc-badge.warn{background:rgba(255,209,102,0.1);color:var(--warn);}
+  .tc-badge.info{background:var(--bg3);color:var(--text2);}
+  .hreflang-item{display:inline-flex;align-items:center;background:var(--bg3);border:1px solid var(--border);border-radius:4px;padding:2px 6px;font-size:10px;font-family:var(--mono);color:var(--text2);margin:2px;}
+
+  /* ─── KEYWORD ANALYSIS ─── */
+  .kw-item{display:flex;align-items:center;gap:7px;padding:5px 0;border-bottom:1px solid var(--border);}
+  .kw-item:last-child{border-bottom:none;}
+  .kw-rank{font-size:10px;color:var(--text3);font-family:var(--mono);min-width:14px;text-align:right;}
+  .kw-word{font-size:12px;color:var(--text);min-width:85px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .kw-bar-wrap{flex:1;}
+  .kw-bar{height:4px;border-radius:2px;background:var(--border2);overflow:hidden;}
+  .kw-bar-fill{height:100%;border-radius:2px;background:linear-gradient(90deg,var(--accent2),var(--accent));}
+  .kw-meta{font-size:10px;color:var(--text3);font-family:var(--mono);min-width:54px;text-align:right;white-space:nowrap;}
+
+  /* ─── LINK LIST ─── */
+  .link-stats{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:10px;}
+  .link-stat{background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:7px 10px;text-align:center;}
+  .link-stat .ls-val{font-size:17px;font-weight:700;font-family:var(--mono);}
+  .link-stat .ls-label{font-size:10px;color:var(--text2);margin-top:1px;}
+  .link-item{display:flex;gap:6px;align-items:flex-start;padding:5px 0;border-bottom:1px solid var(--border);}
+  .link-item:last-child{border-bottom:none;}
+  .link-badge{flex-shrink:0;font-family:var(--mono);font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;margin-top:2px;}
+  .link-badge.int{background:rgba(0,229,192,0.1);color:var(--success);}
+  .link-badge.ext{background:rgba(124,106,255,0.1);color:var(--accent2);}
+  .link-badge.nf{background:rgba(255,107,107,0.1);color:var(--danger);}
+  .link-text{font-size:11px;color:var(--text);}
+  .link-url{font-size:10px;color:var(--text3);font-family:var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+
+  /* ─── SCHEMA ─── */
+  .schema-item{background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:8px;}
+  .schema-type{font-family:var(--mono);font-size:12px;font-weight:700;color:var(--accent2);margin-bottom:6px;}
+  .schema-valid{font-size:10px;font-family:var(--mono);font-weight:700;}
+  .schema-valid.good{color:var(--success);}
+  .schema-valid.bad{color:var(--danger);}
+  pre.schema-raw{font-family:var(--mono);font-size:9px;color:var(--text3);background:var(--bg2);border-radius:4px;padding:8px;overflow:auto;max-height:120px;margin-top:6px;white-space:pre-wrap;word-break:break-word;}
+
+  /* ─── PERFORMANCE ─── */
+  .perf-bar{height:6px;border-radius:3px;background:var(--border2);margin:6px 0 3px;overflow:hidden;}
+  .perf-bar-fill{height:100%;border-radius:3px;transition:width 0.5s ease;}
+  .res-item{display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--border);}
+  .res-item:last-child{border-bottom:none;}
+  .res-type{font-family:var(--mono);font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;background:var(--bg3);color:var(--text2);flex-shrink:0;min-width:38px;text-align:center;}
+  .res-bar-wrap{flex:1;}
+  .res-count{font-family:var(--mono);font-size:11px;color:var(--text);text-align:right;flex-shrink:0;}
+
+  /* ─── SOCIAL PREVIEW ─── */
+  .sp-card{border:1px solid var(--border);border-radius:10px;overflow:hidden;margin-bottom:14px;background:var(--bg2);}
+  .sp-image{width:100%;height:120px;background:var(--bg3);display:flex;align-items:center;justify-content:center;overflow:hidden;}
+  .sp-image img{width:100%;height:100%;object-fit:cover;}
+  .sp-image-empty{font-size:26px;color:var(--text3);}
+  .sp-body{padding:10px 12px;}
+  .sp-domain{font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:3px;}
+  .sp-title{font-size:13px;font-weight:600;color:var(--text);line-height:1.3;margin-bottom:4px;}
+  .sp-desc{font-size:11px;color:var(--text2);line-height:1.5;}
+
+  /* ─── SERP PREVIEW ─── */
+  .serp-mockup{background:#fff;border-radius:10px;padding:14px 16px;border:1px solid #e0e0e0;font-family:arial,sans-serif;}
+  .serp-url-bar{display:flex;align-items:center;gap:6px;margin-bottom:4px;}
+  .serp-favicon{width:18px;height:18px;background:#f1f3f4;border-radius:50%;}
+  .serp-domain{font-size:13px;color:#202124;}
+  .serp-crumb{font-size:12px;color:#4d5156;}
+  .serp-title{font-size:19px;color:#1a0dab;line-height:1.3;margin-bottom:4px;cursor:pointer;font-weight:400;}
+  .serp-title.truncated{position:relative;}
+  .serp-title.truncated::after{content:'';position:absolute;right:0;top:0;bottom:0;width:30px;background:linear-gradient(to right,transparent,#fff);}
+  .serp-desc{font-size:13px;color:#4d5156;line-height:1.5;}
+  .serp-date{font-size:13px;color:#70757a;}
+
+  /* ─── CONTENT STATS ─── */
+  .content-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:8px;}
+  .content-stat{background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:7px 8px;text-align:center;}
+  .content-stat .cs-val{font-size:16px;font-weight:700;font-family:var(--mono);color:var(--text);}
+  .content-stat .cs-label{font-size:9px;color:var(--text3);font-family:var(--mono);margin-top:1px;}
+  .readability-bar{height:7px;border-radius:4px;background:var(--border2);overflow:hidden;margin:4px 0;}
+  .readability-fill{height:100%;border-radius:4px;background:linear-gradient(90deg,var(--danger),var(--warn),var(--success));}
+
+  /* ─── TOOLS ─── */
+  .tool-item{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);cursor:pointer;transition:background 0.15s;border-radius:4px;}
+  .tool-item:last-child{border-bottom:none;}
+  .tool-item:hover{background:var(--bg3);}
+  .tool-name{flex:1;font-size:12px;color:var(--text);}
+  .tool-arrow{font-size:12px;color:var(--accent);font-family:var(--mono);}
+
+  /* ─── HISTORY ─── */
+  .history-item{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);cursor:pointer;}
+  .history-item:last-child{border-bottom:none;}
+  .history-score{width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;position:relative;flex-shrink:0;}
+  .history-score-inner{position:absolute;inset:4px;background:var(--bg2);border-radius:50%;display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:9px;font-weight:700;}
+  .history-info{flex:1;min-width:0;}
+  .history-url{font-size:11px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .history-date{font-size:10px;color:var(--text3);font-family:var(--mono);margin-top:1px;}
+  .history-counts{text-align:right;flex-shrink:0;}
+
+  /* ─── ACCESSIBILITY ─── */
+  .a11y-score-circle{width:64px;height:64px;border-radius:50%;display:flex;align-items:center;justify-content:center;position:relative;margin:0 auto 8px;flex-shrink:0;}
+  .a11y-score-circle::after{content:'';position:absolute;inset:7px;background:var(--bg2);border-radius:50%;}
+  .a11y-score-num{position:relative;z-index:1;font-family:var(--mono);font-size:17px;font-weight:700;}
+
+  /* ─── HTTP HEADERS ─── */
+  .header-row{display:flex;gap:6px;padding:5px 0;border-bottom:1px solid var(--border);align-items:flex-start;}
+  .header-row:last-child{border-bottom:none;}
+  .header-key{font-family:var(--mono);font-size:10px;color:var(--accent2);flex-shrink:0;min-width:130px;word-break:break-all;}
+  .header-val{font-size:11px;color:var(--text2);flex:1;word-break:break-all;}
+
+  /* ─── IMAGE LIST ─── */
+  .img-item{display:flex;gap:8px;align-items:flex-start;padding:5px 0;border-bottom:1px solid var(--border);}
+  .img-item:last-child{border-bottom:none;}
+  .img-status{font-size:13px;flex-shrink:0;}
+  .img-info{flex:1;min-width:0;}
+  .img-src{font-size:10px;color:var(--text3);font-family:var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .img-alt{font-size:12px;color:var(--text);margin-top:1px;}
+  .img-alt.empty{color:var(--danger);font-style:italic;}
+
+  /* ─── FOCUS KEYWORD ─── */
+  .kw-check-row{display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--border);}
+  .kw-check-row:last-child{border-bottom:none;}
+  .kw-check-icon{font-size:16px;flex-shrink:0;}
+  .kw-check-label{flex:1;font-size:12px;color:var(--text);}
+  .kw-check-sub{font-size:10px;color:var(--text3);margin-top:1px;}
+
+  /* ─── LOADING / MISC ─── */
+  .spinner{width:20px;height:20px;border:2px solid var(--border2);border-top-color:var(--accent);border-radius:50%;animation:spin 0.7s linear infinite;margin:0 auto;}
+  @keyframes spin{to{transform:rotate(360deg);}}
+  .loading-state{padding:32px;text-align:center;}
+  .loading-state p{font-size:11px;color:var(--text2);margin-top:10px;font-family:var(--mono);}
+  .scroll-area{overflow-y:auto;max-height:calc(100vh - 176px);}
+  ::-webkit-scrollbar{width:4px;}
+  ::-webkit-scrollbar-track{background:transparent;}
+  ::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px;}
+  input:focus,select:focus{border-color:var(--accent) !important;box-shadow:0 0 0 2px rgba(0,229,192,0.15);}
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<div class="header">
+  <div class="logo">🔍</div>
+  <div class="header-text">
+    <h1>SEO LENS</h1>
+    <p id="page-url">Hazır</p>
+  </div>
+  <button class="export-btn" id="export-btn" title="Raporu panoya kopyala">⬇</button>
+  <button class="scan-btn" id="scan-btn">TARA</button>
+</div>
+
+<!-- SCORE BAR -->
+<div class="score-bar" id="score-bar">
+  <div class="score-row">
+    <div class="score-circle" id="score-circle">
+      <span class="score-num" id="score-num">—</span>
+    </div>
+    <div class="score-info">
+      <h2 id="score-label">—</h2>
+      <p id="score-desc">Sayfa analiz edildi</p>
+    </div>
+  </div>
+  <div class="score-tags" id="score-tags"></div>
+  <div class="cat-grid" id="cat-grid"></div>
+</div>
+
+<!-- TABS -->
+<div class="tabs" id="tabs-bar" style="display:none">
+  <button class="tab active" data-panel="overview"><span class="tab-icon">📊</span>Özet</button>
+  <button class="tab" data-panel="serp"><span class="tab-icon">🔍</span>SERP</button>
+  <button class="tab" data-panel="keyword"><span class="tab-icon">🔑</span>Kelime</button>
+  <button class="tab" data-panel="technical"><span class="tab-icon">⚙️</span>Teknik</button>
+  <button class="tab" data-panel="meta"><span class="tab-icon">🏷️</span>Meta</button>
+  <button class="tab" data-panel="content"><span class="tab-icon">📄</span>İçerik</button>
+  <button class="tab" data-panel="headings"><span class="tab-icon">📝</span>Başlık</button>
+  <button class="tab" data-panel="perf"><span class="tab-icon">⚡</span>Hız</button>
+  <button class="tab" data-panel="images"><span class="tab-icon">🖼️</span>Görsel</button>
+  <button class="tab" data-panel="links"><span class="tab-icon">🔗</span>Link</button>
+  <button class="tab" data-panel="schema"><span class="tab-icon">🧩</span>Şema</button>
+  <button class="tab" data-panel="social"><span class="tab-icon">📱</span>Sosyal</button>
+  <button class="tab" data-panel="a11y"><span class="tab-icon">♿</span>A11y</button>
+  <button class="tab" data-panel="history"><span class="tab-icon">📜</span>Geçmiş</button>
+  <button class="tab" data-panel="tools"><span class="tab-icon">🛠️</span>Araçlar</button>
+  <button class="tab" data-panel="settings"><span class="tab-icon">⚙</span>Ayar</button>
+</div>
+
+<!-- PANELS -->
+<div class="panels scroll-area" id="panels">
+
+  <div class="panel active" id="panel-empty">
+    <div class="empty-state">
+      <div class="icon">🔍</div>
+      <h3>SEO Analizi Başlatın</h3>
+      <p>Aktif sayfanın SEO sağlığını analiz etmek için <strong>TARA</strong> butonuna tıklayın.</p>
+    </div>
+  </div>
+
+  <div class="panel" id="panel-loading">
+    <div class="loading-state">
+      <div class="spinner"></div>
+      <p id="loading-msg">Sayfa taranıyor...</p>
+    </div>
+  </div>
+
+  <div class="panel" id="panel-error">
+    <div class="empty-state">
+      <div class="icon">⚠️</div>
+      <h3>Tarama Başarısız</h3>
+      <p id="error-msg">Bilinmeyen hata.</p>
+    </div>
+  </div>
+
+  <div class="panel" id="panel-overview"></div>
+  <div class="panel" id="panel-serp"></div>
+  <div class="panel" id="panel-keyword"></div>
+  <div class="panel" id="panel-technical"></div>
+  <div class="panel" id="panel-meta"></div>
+  <div class="panel" id="panel-content"></div>
+  <div class="panel" id="panel-headings"></div>
+  <div class="panel" id="panel-perf"></div>
+  <div class="panel" id="panel-images"></div>
+  <div class="panel" id="panel-links"></div>
+  <div class="panel" id="panel-schema"></div>
+  <div class="panel" id="panel-social"></div>
+  <div class="panel" id="panel-a11y"></div>
+  <div class="panel" id="panel-history"></div>
+  <div class="panel" id="panel-tools"></div>
+
+  <!-- SETTINGS -->
+  <div class="panel" id="panel-settings">
+    <div class="section">
+      <div class="section-header"><h3>🚀 PageSpeed Insights API</h3></div>
+      <div class="section-body">
+        <div class="row"><div class="row-body">
+          <div class="row-label">API Key</div>
+          <input id="psi-key-input" type="password" placeholder="AIza..." style="width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:6px;padding:7px 10px;color:var(--text);font-family:var(--mono);font-size:11px;outline:none;margin-top:4px" />
+          <div style="font-size:10px;color:var(--text3);margin-top:5px">Google Cloud Console → PageSpeed Insights API'den ücretsiz alın.</div>
+        </div></div>
+        <button id="save-psi-key" style="margin-top:10px;width:100%;background:var(--accent);color:#000;border:none;border-radius:7px;padding:8px;font-family:var(--mono);font-size:11px;font-weight:700;cursor:pointer">KAYDET</button>
+        <div id="psi-key-status" style="font-size:11px;color:var(--text3);margin-top:6px;text-align:center"></div>
+      </div>
+    </div>
+    <div class="section">
+      <div class="section-header"><h3>🔗 Broken Link Checker</h3></div>
+      <div class="section-body">
+        <div class="row"><div class="row-body">
+          <div class="row-label">Kontrol edilecek maksimum dış link</div>
+          <select id="link-check-limit" style="width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:6px;padding:7px 10px;color:var(--text);font-family:var(--mono);font-size:11px;outline:none;margin-top:4px">
+            <option value="0">Kapalı</option>
+            <option value="10">10 link</option>
+            <option value="20" selected>20 link</option>
+            <option value="50">50 link</option>
+          </select>
+        </div></div>
+      </div>
+    </div>
+    <div class="section">
+      <div class="section-header"><h3>ℹ️ Hakkında</h3></div>
+      <div class="section-body">
+        <div style="font-size:11px;color:var(--text2);line-height:1.8">
+          <b style="color:var(--text)">SEO Lens v2.1</b><br>
+          <b style="color:var(--text)">Veri kaynakları:</b><br>
+          • DOM analizi (anlık, her taramada)<br>
+          • Performance API (tarayıcı lab verisi)<br>
+          • PageSpeed Insights API (opsiyonel, CrUX)<br>
+          • robots.txt / sitemap.xml (HTTP fetch)<br>
+          • HTTP headers analizi (HEAD isteği)<br>
+          • Broken link kontrolü (HEAD isteği)
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script src="sidepanel.js"></script>
+</body>
+</html>
