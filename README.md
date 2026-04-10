@@ -157,7 +157,7 @@ Contributions are welcome! Feel free to:
 
 ```bash
 # Clone the repo
-git clone https://github.com/faikcelik/seolens.git
+git clone https://github.com/intelseclab/seolens.git
 
 # Load in Chrome (no build step required — pure HTML/CSS/JS)
 # chrome://extensions/ → Load unpacked → select folder
@@ -172,16 +172,14 @@ MIT License — free to use, modify, and distribute. See [LICENSE](LICENSE) for 
 ---
 
 ## Author
-
-**Faik ÇELİK**
-GitHub: [@faikcelik](https://github.com/faikcelik)
+```
+Faik ÇELİK<br/>
+GitHub: [@faikcelik](https://github.com/faikcelik)<br/>
 Website: websiteanalizi.com
+```
 ---
 
-## Developed on Behalf of
+**Developed on Behalf of** · [Diyarbakır Yazılım Topluluğu](https://www.diyarbakiryazilim.org/) *(Diyarbakır Software Community)*
 
-**Diyarbakır Yazılım Topluluğu**
-*(Diyarbakır Software Community)*
-🌐 [diyarbakiryazilim.org](https://www.diyarbakiryazilim.org/)
+> Open-source contribution to the local software community of Diyarbakır, Türkiye — making professional SEO analysis tools accessible to everyone.
 
-> This project was developed as an open-source contribution to the local software community of Diyarbakır, Türkiye — with the goal of making professional SEO analysis tools accessible to everyone.
