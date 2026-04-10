@@ -172,11 +172,11 @@ MIT License — free to use, modify, and distribute. See [LICENSE](LICENSE) for 
 ---
 
 ## Author
-```
-Faik ÇELİK<br/>
-GitHub: [@faikcelik](https://github.com/faikcelik)<br/>
-Website: websiteanalizi.com
-```
+
+> Faik ÇELİK<br/>
+> GitHub: [@faikcelik](https://github.com/faikcelik)<br/>
+> Website: websiteanalizi.com
+
 ---
 
 **Developed on Behalf of** · [Diyarbakır Yazılım Topluluğu](https://www.diyarbakiryazilim.org/) *(Diyarbakır Software Community)*
