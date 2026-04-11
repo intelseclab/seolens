@@ -10,15 +10,21 @@ let headersData = null;
 // ─── INIT ────────────────────────────────────────────────────────────────────
 
 document.addEventListener("DOMContentLoaded", async () => {
+  // Load language preference first
+  const stored = await chrome.storage.local.get(["uiLang"]);
+  if (stored.uiLang) currentLang = stored.uiLang;
+
+  applyStaticTranslations(); // sets tabs, scan btn, empty state, renders settings
+
   document.getElementById("scan-btn").addEventListener("click", runScan);
   document.getElementById("export-btn").addEventListener("click", exportReport);
-  document.getElementById("save-psi-key").addEventListener("click", saveSettings);
 
   document.querySelectorAll(".tab").forEach(btn => {
     btn.addEventListener("click", () => {
       switchTab(btn);
       if (btn.dataset.panel === "history") renderHistory();
       if (btn.dataset.panel === "tools" && analysisData) renderTools(analysisData.meta.url);
+      if (btn.dataset.panel === "settings") renderSettings();
     });
   });
 
@@ -26,40 +32,36 @@ document.addEventListener("DOMContentLoaded", async () => {
     const h = e.target.closest("[data-toggle-section]");
     if (h) toggleSection(h);
   });
-
-  const stored = await chrome.storage.local.get(["psiKey", "linkCheckLimit"]);
-  if (stored.psiKey) document.getElementById("psi-key-input").value = stored.psiKey;
-  if (stored.linkCheckLimit != null) document.getElementById("link-check-limit").value = stored.linkCheckLimit;
 });
 
 async function saveSettings() {
-  const key = document.getElementById("psi-key-input").value.trim();
-  const limit = document.getElementById("link-check-limit").value;
-  await chrome.storage.local.set({ psiKey: key, linkCheckLimit: parseInt(limit) });
+  const keyEl = document.getElementById("psi-key-input");
+  const limEl = document.getElementById("link-check-limit");
+  if (!keyEl) return;
+  await chrome.storage.local.set({ psiKey: keyEl.value.trim(), linkCheckLimit: parseInt(limEl?.value || "20") });
   const st = document.getElementById("psi-key-status");
-  st.textContent = "✓ Kaydedildi"; st.style.color = "var(--success)";
-  setTimeout(() => { st.textContent = ""; }, 2000);
+  if (st) { st.textContent = t("saved"); st.style.color = "var(--success)"; setTimeout(() => { st.textContent = ""; }, 2000); }
 }
 
 // ─── ENTRY POINT ─────────────────────────────────────────────────────────────
 
 async function runScan() {
   const btn = document.getElementById("scan-btn");
-  btn.textContent = "TARANIYOR…"; btn.classList.add("loading"); btn.disabled = true;
+  btn.textContent = t("scanning"); btn.classList.add("loading"); btn.disabled = true;
   psiData = null; linkResults = null; headersData = null;
 
-  showPanel("loading"); setMsg("Sayfa analiz ediliyor...");
+  showPanel("loading"); setMsg(t("loadingPage"));
   document.getElementById("score-bar").classList.remove("visible");
   document.getElementById("tabs-bar").style.display = "none";
 
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (!tab?.id) throw new Error("Aktif sekme bulunamadı.");
+    if (!tab?.id) throw new Error(t("errNoTab"));
     const url = tab.url || "";
     document.getElementById("page-url").textContent = url.replace(/^https?:\/\//, "").substring(0, 44) || "—";
 
     if (!url || /^(chrome|chrome-extension|edge|about):/.test(url))
-      throw new Error("Bu sayfa taranamaz. Normal bir web sayfası açın.");
+      throw new Error(t("errUnscannable"));
 
     const [seoRes, perfRes] = await Promise.all([
       chrome.scripting.executeScript({ target: { tabId: tab.id }, func: runSEOAnalysis }),
@@ -68,7 +70,7 @@ async function runScan() {
     analysisData = seoRes[0].result;
     perfData = perfRes[0].result;
 
-    setMsg("Teknik kontroller...");
+    setMsg(t("loadingTech"));
     const [td, hd] = await Promise.all([
       checkTechnicalAsync(analysisData.meta.baseUrl, url),
       new Promise(r => chrome.runtime.sendMessage({ type: "FETCH_HEADERS", url }, res => r(res || {}))),
@@ -77,13 +79,13 @@ async function runScan() {
     headersData = hd;
 
     const stored = await chrome.storage.local.get(["psiKey", "linkCheckLimit"]);
-    if (stored.psiKey) { setMsg("PageSpeed API..."); psiData = await fetchPSI(url, stored.psiKey); }
+    if (stored.psiKey) { setMsg(t("loadingPSI")); psiData = await fetchPSI(url, stored.psiKey); }
 
     const lim = stored.linkCheckLimit ?? 20;
     if (lim > 0) {
       const extLinks = analysisData.links.filter(l => !l.isInternal && l.href.startsWith("http")).slice(0, lim).map(l => l.href);
       if (extLinks.length) {
-        setMsg(`${extLinks.length} link kontrol ediliyor...`);
+        setMsg(t("loadingLinks", extLinks.length));
         linkResults = await new Promise(r => chrome.runtime.sendMessage({ type: "CHECK_LINKS", urls: extLinks }, r));
       }
     }
@@ -91,9 +93,9 @@ async function runScan() {
     await saveToHistory(url, calcScore(analysisData, perfData, techData));
     renderAll();
   } catch (err) {
-    showError(err.message || "Bilinmeyen hata.");
+    showError(err.message || t("errUnknown"));
   } finally {
-    btn.textContent = "YENİLE"; btn.classList.remove("loading"); btn.disabled = false;
+    btn.textContent = t("refresh"); btn.classList.remove("loading"); btn.disabled = false;
   }
 }
 
@@ -188,7 +190,7 @@ function runSEOAnalysis() {
     try {
       const p = JSON.parse(s.textContent);
       return { valid: true, type: p["@type"] || p?.["@graph"]?.map(g => g["@type"]).join(", ") || "Unknown", raw: JSON.stringify(p, null, 2).substring(0, 600) };
-    } catch { return { valid: false, type: "Parse Hatası", raw: s.textContent.substring(0, 200) }; }
+    } catch { return { valid: false, type: "Parse Error", raw: s.textContent.substring(0, 200) }; }
   });
 
   // TECHNICAL
@@ -456,61 +458,61 @@ function calcScore(d, perf, tech) {
   const m = d.meta;
   const add = (p, type, msg) => { pts += p; (type==="good"?goods:type==="warn"?warnings:issues).push(msg); };
 
-  if (!m.title) add(0,"issue","Sayfa başlığı eksik");
-  else if (m.titleLength<30) add(5,"warn",`Başlık çok kısa — ${m.titleLength} karakter (ideal 30–60)`);
-  else if (m.titleLength>60) add(6,"warn",`Başlık çok uzun — ${m.titleLength} karakter (ideal 30–60)`);
-  else add(10,"good","Başlık uzunluğu ideal");
+  if (!m.title) add(0,"issue",t("scoreTitleMissing"));
+  else if (m.titleLength<30) add(5,"warn",t("scoreTitleShort",m.titleLength));
+  else if (m.titleLength>60) add(6,"warn",t("scoreTitleLong",m.titleLength));
+  else add(10,"good",t("scoreTitleGood"));
 
-  if (!m.metaDesc) add(0,"issue","Meta açıklama eksik");
-  else if (m.metaDescLength<70) add(5,"warn",`Açıklama çok kısa — ${m.metaDescLength} karakter`);
-  else if (m.metaDescLength>160) add(6,"warn",`Açıklama çok uzun — ${m.metaDescLength} karakter`);
-  else add(10,"good","Meta açıklama ideal uzunlukta");
+  if (!m.metaDesc) add(0,"issue",t("scoreDescMissing"));
+  else if (m.metaDescLength<70) add(5,"warn",t("scoreDescShort",m.metaDescLength));
+  else if (m.metaDescLength>160) add(6,"warn",t("scoreDescLong",m.metaDescLength));
+  else add(10,"good",t("scoreDescGood"));
 
-  m.hasHttps ? add(8,"good","HTTPS aktif") : add(0,"issue","HTTPS kullanılmıyor");
-  !m.canonical ? add(0,"warn","Canonical URL tanımlı değil") : m.canonicalIsExternal ? add(3,"warn","Canonical farklı domain'e işaret ediyor") : add(7,"good","Canonical URL tanımlı");
+  m.hasHttps ? add(8,"good",t("scoreHttpsGood")) : add(0,"issue",t("scoreHttpsBad"));
+  !m.canonical ? add(0,"warn",t("scoreCanonicalMissing")) : m.canonicalIsExternal ? add(3,"warn",t("scoreCanonicalExternal")) : add(7,"good",t("scoreCanonicalGood"));
 
   const h1c = d.headings.h1?.length||0;
-  if (!h1c) add(0,"issue","H1 başlık yok");
-  else if (h1c>1) add(4,"warn",`${h1c} adet H1 — sadece 1 olmalı`);
-  else add(8,"good","Tek H1 başlık var");
+  if (!h1c) add(0,"issue",t("scoreH1Missing"));
+  else if (h1c>1) add(4,"warn",t("scoreH1Multiple",h1c));
+  else add(8,"good",t("scoreH1Good"));
 
-  d.technical?.noindex ? add(0,"issue","Sayfa noindex ile gizlenmiş!") : add(7,"good","Sayfa indekslenebilir");
-  !m.lang ? add(0,"warn","HTML lang attribute eksik") : add(4,"good",`Dil attribute: ${m.lang}`);
-  !m.viewport ? add(0,"warn","Viewport meta eksik") : add(3,"good","Viewport tanımlı");
-  !d.technical?.favicon ? add(0,"warn","Favicon yok") : add(3,"good","Favicon var");
+  d.technical?.noindex ? add(0,"issue",t("scoreNoindex")) : add(7,"good",t("scoreIndexable"));
+  !m.lang ? add(0,"warn",t("scoreLangMissing")) : add(4,"good",t("scoreLangGood",m.lang));
+  !m.viewport ? add(0,"warn",t("scoreViewportMissing")) : add(3,"good",t("scoreViewportGood"));
+  !d.technical?.favicon ? add(0,"warn",t("scoreFaviconMissing")) : add(3,"good",t("scoreFaviconGood"));
 
   const imgs = d.images||[], noAlt = imgs.filter(i=>!i.alt).length;
   if (imgs.length>0) {
-    if (noAlt===0) add(7,"good","Tüm görsellerde alt text var");
-    else if (noAlt<=2) add(4,"warn",`${noAlt} görselde alt text eksik`);
-    else add(2,"issue",`${noAlt} görselde alt text yok`);
+    if (noAlt===0) add(7,"good",t("scoreAltGood"));
+    else if (noAlt<=2) add(4,"warn",t("scoreAltWarn",noAlt));
+    else add(2,"issue",t("scoreAltBad",noAlt));
   }
 
-  !(d.schema||[]).length ? add(0,"warn","Schema/JSON-LD yok") : add(5,"good",`${d.schema.length} schema tanımlı`);
-  !tech?.robotsTxt?.accessible ? add(2,"warn","robots.txt erişilemiyor") : tech.robotsTxt.pageDisallowed ? add(0,"issue","robots.txt bu sayfayı engelliyor") : add(5,"good","robots.txt erişilebilir");
-  !tech?.sitemapXml?.accessible ? add(0,"warn","sitemap.xml bulunamadı") : add(5,"good","sitemap.xml mevcut");
-  !m.ogTitle&&!m.ogDesc ? add(0,"warn","Open Graph etiketleri eksik") : (m.ogTitle&&m.ogDesc&&m.ogImage) ? add(5,"good","Open Graph etiketleri tam") : add(3,"warn","Open Graph eksik (image/title/desc)");
+  !(d.schema||[]).length ? add(0,"warn",t("scoreSchemaMissing")) : add(5,"good",t("scoreSchemaGood",d.schema.length));
+  !tech?.robotsTxt?.accessible ? add(2,"warn",t("scoreRobotsInaccessible")) : tech.robotsTxt.pageDisallowed ? add(0,"issue",t("scoreRobotsBlocked")) : add(5,"good",t("scoreRobotsGood"));
+  !tech?.sitemapXml?.accessible ? add(0,"warn",t("scoreSitemapMissing")) : add(5,"good",t("scoreSitemapGood"));
+  !m.ogTitle&&!m.ogDesc ? add(0,"warn",t("scoreOGMissing")) : (m.ogTitle&&m.ogDesc&&m.ogImage) ? add(5,"good",t("scoreOGGood")) : add(3,"warn",t("scoreOGPartial"));
 
   const wc = d.content?.wordCount||0;
-  if (wc<100) add(0,"issue",`Çok az içerik (${wc} kelime)`);
-  else if (wc<300) add(3,"warn",`Yetersiz içerik (${wc} kelime, ideal 600+)`);
-  else if (wc>=600) add(6,"good",`Zengin içerik (${wc} kelime)`);
-  else add(4,"good",`Yeterli içerik (${wc} kelime)`);
+  if (wc<100) add(0,"issue",t("scoreContentLow",wc));
+  else if (wc<300) add(3,"warn",t("scoreContentWarn",wc));
+  else if (wc>=600) add(6,"good",t("scoreContentRich",wc));
+  else add(4,"good",t("scoreContentOk",wc));
 
   if (psiData&&!psiData.error) {
     const p = psiData.scores.performance;
-    p>=90?add(6,"good",`PageSpeed performans: ${p}/100`):p>=50?add(3,"warn",`PageSpeed performans: ${p}/100`):add(1,"issue",`PageSpeed performans düşük: ${p}/100`);
+    p>=90?add(6,"good",t("scorePSIGood",p)):p>=50?add(3,"warn",t("scorePSIGood",p)):add(1,"issue",t("scorePSIBad",p));
   } else if (perf) {
     const ok = (perf.fcp!=null&&perf.fcp<1800)&&(perf.ttfb!=null&&perf.ttfb<600);
-    ok?add(6,"good","FCP ve TTFB değerleri iyi"):add(3,"warn","Performans iyileştirilebilir");
+    ok?add(6,"good",t("scorePerfGood")):add(3,"warn",t("scorePerfWarn"));
   }
 
   const headersXRobots = headersData?.headers?.["x-robots-tag"];
-  if (headersXRobots && /noindex/i.test(headersXRobots)) add(0,"issue",`X-Robots-Tag: ${headersXRobots} (HTTP header'dan noindex)`);
+  if (headersXRobots && /noindex/i.test(headersXRobots)) add(0,"issue",t("scoreXRobotsNoindex",headersXRobots));
 
   const pct = Math.min(100, Math.max(0, Math.round(pts)));
   let label, color;
-  if (pct>=80){label="Mükemmel";color="#00e5c0";}else if(pct>=60){label="İyi";color="#00e5c0";}else if(pct>=40){label="Orta";color="#ffd166";}else{label="Zayıf";color="#ff6b6b";}
+  if (pct>=80){label=t("excellent");color="#00e5c0";}else if(pct>=60){label=t("good");color="#00e5c0";}else if(pct>=40){label=t("average");color="#ffd166";}else{label=t("poor");color="#ff6b6b";}
   return { pct, label, color, issues, warnings, goods };
 }
 
@@ -546,10 +548,10 @@ function calcCategoryScores(d, perf, tech) {
   const cl = v => Math.min(100,Math.max(0,Math.round(v)));
   const co = v => v>=70?"#00e5c0":v>=40?"#ffd166":"#ff6b6b";
   return [
-    {label:"TEKNİK",val:cl(tPts),color:co(tPts)},
-    {label:"META",val:cl(mPts),color:co(mPts)},
-    {label:"İÇERİK",val:cl(cPts),color:co(cPts)},
-    {label:"HIZ",val:cl(pPts),color:co(pPts)},
+    {label:t("catTech"),val:cl(tPts),color:co(tPts)},
+    {label:t("catMeta"),val:cl(mPts),color:co(mPts)},
+    {label:t("catContent"),val:cl(cPts),color:co(cPts)},
+    {label:t("catSpeed"),val:cl(pPts),color:co(pPts)},
   ];
 }
 
@@ -577,24 +579,24 @@ function renderOverview(d, score) {
       <div class="section-header"><h3>🚀 PageSpeed Insights</h3></div>
       <div class="section-body">
         <div class="metric-grid">
-          ${["performance","seo","bestPractices"].map((k,i)=>{const v=psiData.scores[k],c=v>=90?"good":v>=50?"warn":"bad",co=v>=90?"#00e5c0":v>=50?"#ffd166":"#ff6b6b",lb=["PERFORMANS","SEO","BEST PRACT."][i];return`<div class="metric-card ${c}"><div class="m-label">${lb}</div><div class="m-val" style="color:${co}">${v}</div></div>`}).join("")}
-          <div class="metric-card"><div class="m-label">MOBİL LCP</div><div class="m-val" style="font-size:14px">${psiData.metrics.lcp||"—"}</div></div>
+          ${["performance","seo","bestPractices"].map((k,i)=>{const v=psiData.scores[k],c=v>=90?"good":v>=50?"warn":"bad",co=v>=90?"#00e5c0":v>=50?"#ffd166":"#ff6b6b",lb=[t("lblPerf"),"SEO",t("lblBestPract")][i];return`<div class="metric-card ${c}"><div class="m-label">${lb}</div><div class="m-val" style="color:${co}">${v}</div></div>`}).join("")}
+          <div class="metric-card"><div class="m-label">${t("lblMobileLCP")}</div><div class="m-val" style="font-size:14px">${psiData.metrics.lcp||"—"}</div></div>
         </div>
         ${psiData.fieldData?`<div style="margin-top:8px;padding:8px;background:var(--bg3);border-radius:6px;border:1px solid var(--border);font-size:11px;color:var(--text2)">🌍 <b>CrUX:</b> LCP ${psiData.fieldData.lcpMs}ms (${psiData.fieldData.lcpCategory}) &nbsp;|&nbsp; CLS ${psiData.fieldData.clsCategory}</div>`:""}
       </div>
     </div>` : "";
 
   el.innerHTML = `${psiBlock}
-    <div class="section"><div class="section-header" data-toggle-section="1"><h3>🔴 Hatalar</h3><span class="badge" style="background:rgba(255,107,107,0.1);color:#ff6b6b">${score.issues.length}</span><span class="chevron">▼</span></div><div class="section-body">${rows(score.issues,"🔴")}</div></div>
-    <div class="section"><div class="section-header" data-toggle-section="1"><h3>🟡 Uyarılar</h3><span class="badge" style="background:rgba(255,209,102,0.1);color:#ffd166">${score.warnings.length}</span><span class="chevron">▼</span></div><div class="section-body">${rows(score.warnings,"🟡")}</div></div>
-    <div class="section"><div class="section-header" data-toggle-section="1"><h3>🟢 Başarılı</h3><span class="badge" style="background:rgba(0,229,192,0.1);color:#00e5c0">${score.goods.length}</span><span class="chevron">▼</span></div><div class="section-body">${rows(score.goods.slice(0,8),"🟢")}</div></div>
-    <div class="section"><div class="section-header"><h3>📊 Hızlı İstatistik</h3></div><div class="section-body"><div class="metric-grid">
-      <div class="metric-card"><div class="m-label">KELİME</div><div class="m-val">${d.content?.wordCount||0}</div></div>
-      <div class="metric-card"><div class="m-label">OKUMA</div><div class="m-val">${d.content?.readingTimeMin||1}<span class="m-unit">dk</span></div></div>
-      <div class="metric-card"><div class="m-label">GÖRSEL</div><div class="m-val">${d.images.length}</div></div>
-      <div class="metric-card"><div class="m-label">SCHEMA</div><div class="m-val">${d.schema.length}</div></div>
-      <div class="metric-card"><div class="m-label">İÇ LİNK</div><div class="m-val">${d.links.filter(l=>l.isInternal).length}</div></div>
-      <div class="metric-card"><div class="m-label">DIŞ LİNK</div><div class="m-val">${d.links.filter(l=>!l.isInternal).length}</div></div>
+    <div class="section"><div class="section-header" data-toggle-section="1"><h3>🔴 ${t("secErrors")}</h3><span class="badge" style="background:rgba(255,107,107,0.1);color:#ff6b6b">${score.issues.length}</span><span class="chevron">▼</span></div><div class="section-body">${rows(score.issues,"🔴")}</div></div>
+    <div class="section"><div class="section-header" data-toggle-section="1"><h3>🟡 ${t("secWarnings")}</h3><span class="badge" style="background:rgba(255,209,102,0.1);color:#ffd166">${score.warnings.length}</span><span class="chevron">▼</span></div><div class="section-body">${rows(score.warnings,"🟡")}</div></div>
+    <div class="section"><div class="section-header" data-toggle-section="1"><h3>🟢 ${t("secPassed")}</h3><span class="badge" style="background:rgba(0,229,192,0.1);color:#00e5c0">${score.goods.length}</span><span class="chevron">▼</span></div><div class="section-body">${rows(score.goods.slice(0,8),"🟢")}</div></div>
+    <div class="section"><div class="section-header"><h3>📊 ${t("quickStats")}</h3></div><div class="section-body"><div class="metric-grid">
+      <div class="metric-card"><div class="m-label">${t("lblWords")}</div><div class="m-val">${d.content?.wordCount||0}</div></div>
+      <div class="metric-card"><div class="m-label">${t("lblRead")}</div><div class="m-val">${d.content?.readingTimeMin||1}<span class="m-unit">${t("lblMin")}</span></div></div>
+      <div class="metric-card"><div class="m-label">${t("lblImages")}</div><div class="m-val">${d.images.length}</div></div>
+      <div class="metric-card"><div class="m-label">${t("lblSchema")}</div><div class="m-val">${d.schema.length}</div></div>
+      <div class="metric-card"><div class="m-label">${t("lblIntLinks")}</div><div class="m-val">${d.links.filter(l=>l.isInternal).length}</div></div>
+      <div class="metric-card"><div class="m-label">${t("lblExtLinks")}</div><div class="m-val">${d.links.filter(l=>!l.isInternal).length}</div></div>
     </div></div></div>`;
 }
 
@@ -603,8 +605,8 @@ function renderOverview(d, score) {
 function renderSERP(m) {
   const el = document.getElementById("panel-serp");
   const url = m.url || "";
-  const title = m.title || "(başlık yok)";
-  const desc = m.metaDesc || m.ogDesc || "(açıklama tanımlı değil — meta description ekleyin)";
+  const title = m.title || t("serpNoTitle");
+  const desc = m.metaDesc || m.ogDesc || t("serpNoDesc");
 
   // Pixel tahmini (ortalama 9.5px/karakter @ 20px font)
   const tPx = Math.round(title.length * 9.5);
@@ -616,15 +618,15 @@ function renderSERP(m) {
 
   const schemas = analysisData?.schema || [];
   const richTypes = ["Article","FAQPage","Product","HowTo","Review","Recipe","Event","BreadcrumbList","LocalBusiness","VideoObject"];
-  const richRows = richTypes.map(t => {
-    const has = schemas.some(s => s.type?.includes(t));
-    const descs = {Article:"Haber/makale",FAQPage:"SSS açılır liste",Product:"Fiyat & yıldız",HowTo:"Adım adım rehber",Review:"Yıldız rating",Recipe:"Tarif kartı",Event:"Etkinlik bilgisi",BreadcrumbList:"Breadcrumb URL",LocalBusiness:"İşletme kartı",VideoObject:"Video önizleme"};
-    return `<div class="row"><div class="row-body"><div class="row-label">${t}</div><div class="row-value ${has?"success":"missing"}">${has?"✓ Aktif":"○ "+esc(descs[t])+" için JSON-LD ekleyin"}</div></div></div>`;
+  const schemaDescs = TRANSLATIONS[currentLang]?.serpSchemaDescs || TRANSLATIONS.en.serpSchemaDescs;
+  const richRows = richTypes.map(rt => {
+    const has = schemas.some(s => s.type?.includes(rt));
+    return `<div class="row"><div class="row-body"><div class="row-label">${rt}</div><div class="row-value ${has?"success":"missing"}">${has?"✓ Active":"○ "+esc(t("serpAddJSON", schemaDescs[rt]||rt))}</div></div></div>`;
   }).join("");
 
   el.innerHTML = `
     <div class="section">
-      <div class="section-header"><h3>🔍 Google Önizleme</h3></div>
+      <div class="section-header"><h3>🔍 ${t("serpSection")}</h3></div>
       <div class="section-body">
         <div class="serp-mockup">
           <div class="serp-url-bar">
@@ -639,20 +641,20 @@ function renderSERP(m) {
         </div>
         <div class="metric-grid" style="margin-top:10px">
           <div class="metric-card ${tPx<=T_MAX?"good":"bad"}">
-            <div class="m-label">BAŞLIK ~PX</div>
+            <div class="m-label">${t("serpTitlePx")}</div>
             <div class="m-val" style="font-size:15px">~${tPx}</div>
-            <div class="m-status" style="color:${tPx<=T_MAX?"#00e5c0":"#ff6b6b"}">${tPx<=T_MAX?"✓ Sığıyor":"✕ Kesiliyor"} · max ~580px</div>
+            <div class="m-status" style="color:${tPx<=T_MAX?"#00e5c0":"#ff6b6b"}">${tPx<=T_MAX?t("serpFits"):t("serpTruncated")} · max ~580px</div>
           </div>
           <div class="metric-card ${dPx<=D_MAX?"good":"bad"}">
-            <div class="m-label">AÇIKLAMA ~PX</div>
+            <div class="m-label">${t("serpDescPx")}</div>
             <div class="m-val" style="font-size:15px">~${dPx}</div>
-            <div class="m-status" style="color:${dPx<=D_MAX?"#00e5c0":"#ff6b6b"}">${dPx<=D_MAX?"✓ Sığıyor":"✕ Kesiliyor"} · max ~920px</div>
+            <div class="m-status" style="color:${dPx<=D_MAX?"#00e5c0":"#ff6b6b"}">${dPx<=D_MAX?t("serpFits"):t("serpTruncated")} · max ~920px</div>
           </div>
         </div>
       </div>
     </div>
     <div class="section">
-      <div class="section-header" data-toggle-section="1"><h3>✨ Rich Snippet Potansiyeli</h3><span class="chevron">▼</span></div>
+      <div class="section-header" data-toggle-section="1"><h3>✨ ${t("serpRich")}</h3><span class="chevron">▼</span></div>
       <div class="section-body">${richRows}</div>
     </div>`;
 }
@@ -663,23 +665,23 @@ function renderKeyword() {
   const el = document.getElementById("panel-keyword");
   el.innerHTML = `
     <div class="section">
-      <div class="section-header"><h3>🔑 Odak Kelime Analizi</h3></div>
+      <div class="section-header"><h3>🔑 ${t("kwSection")}</h3></div>
       <div class="section-body">
         <div style="display:flex;gap:6px;margin-bottom:4px">
-          <input id="kw-input" type="text" placeholder="Hedef kelimenizi girin..." style="flex:1;background:var(--bg3);border:1px solid var(--border2);border-radius:6px;padding:8px 10px;color:var(--text);font-family:var(--sans);font-size:12px;outline:none" />
-          <button id="kw-btn" style="background:var(--accent);color:#000;border:none;border-radius:6px;padding:8px 12px;font-family:var(--mono);font-size:11px;font-weight:700;cursor:pointer">ANALİZ</button>
+          <input id="kw-input" type="text" placeholder="${t("kwPlaceholder")}" style="flex:1;background:var(--bg3);border:1px solid var(--border2);border-radius:6px;padding:8px 10px;color:var(--text);font-family:var(--sans);font-size:12px;outline:none" />
+          <button id="kw-btn" style="background:var(--accent);color:#000;border:none;border-radius:6px;padding:8px 12px;font-family:var(--mono);font-size:11px;font-weight:700;cursor:pointer">${t("kwBtn")}</button>
         </div>
-        <div style="font-size:10px;color:var(--text3);margin-bottom:10px">Örnek: "seo analizi", "chrome eklenti" vb.</div>
+        <div style="font-size:10px;color:var(--text3);margin-bottom:10px">${t("kwHint")}</div>
         <div id="kw-result"></div>
       </div>
     </div>
     <div class="section">
-      <div class="section-header" data-toggle-section="1"><h3>📊 İçerikteki Kelimeler (Top 20)</h3><span class="chevron">▼</span></div>
+      <div class="section-header" data-toggle-section="1"><h3>📊 ${t("kwTopWords")}</h3><span class="chevron">▼</span></div>
       <div class="section-body">
         ${(analysisData?.content?.topKeywords||[]).map((kw,i)=>{
           const max = analysisData.content.topKeywords[0]?.count||1;
           return `<div class="kw-item"><span class="kw-rank">${i+1}</span><span class="kw-word">${esc(kw.word)}</span><div class="kw-bar-wrap"><div class="kw-bar"><div class="kw-bar-fill" style="width:${(kw.count/max)*100}%"></div></div></div><span class="kw-meta">${kw.count}× %${kw.density}</span></div>`;
-        }).join("") || '<p style="color:var(--text3);font-size:12px">Veri yok.</p>'}
+        }).join("") || `<p style="color:var(--text3);font-size:12px">${t("kwNoData")}</p>`}
       </div>
     </div>`;
 
@@ -698,23 +700,23 @@ function renderKeyword() {
     const score = [inTitle,inDesc,inH1,inUrl,inAlt].filter(Boolean).length;
     const sc = score>=4?"#00e5c0":score>=2?"#ffd166":"#ff6b6b";
 
-    const chk = (icon, label, ok, sub="") => `<div class="kw-check-row"><span class="kw-check-icon">${ok?"✅":"❌"}</span><div style="flex:1"><div class="kw-check-label">${label}</div>${sub?`<div class="kw-check-sub">${esc(sub)}</div>`:""}</div><span class="tc-badge ${ok?"ok":"fail"}">${ok?"VAR":"YOK"}</span></div>`;
+    const chk = (_icon, label, ok, sub="") => `<div class="kw-check-row"><span class="kw-check-icon">${ok?"✅":"❌"}</span><div style="flex:1"><div class="kw-check-label">${label}</div>${sub?`<div class="kw-check-sub">${esc(sub)}</div>`:""}</div><span class="tc-badge ${ok?"ok":"fail"}">${ok?t("kwPresent"):t("kwAbsent")}</span></div>`;
 
     document.getElementById("kw-result").innerHTML = `
       <div style="text-align:center;padding:12px 0;margin-bottom:8px;background:var(--bg3);border-radius:8px;border:1px solid var(--border)">
         <div style="font-size:30px;font-weight:700;font-family:var(--mono);color:${sc}">${score}/5</div>
-        <div style="font-size:11px;color:var(--text2);margin-top:3px">"<b>${esc(kw)}</b>" için odak skoru</div>
+        <div style="font-size:11px;color:var(--text2);margin-top:3px">${t("kwFocusScore",esc(kw))}</div>
       </div>
-      ${chk("","Sayfa Başlığı (Title)",inTitle,inTitle?m.title.substring(0,60):"Başlığa ekleyin")}
-      ${chk("","Meta Açıklama",inDesc,inDesc?"":"Meta açıklamaya ekleyin")}
-      ${chk("","H1 Başlık",inH1,inH1?"":(h.h1||[])[0]?.text?.substring(0,50)||"H1 başlığına ekleyin")}
-      ${chk("","URL / Slug",inUrl,inUrl?"":"URL'ye ekleyin (kelime-seklinde)")}
-      ${chk("","Görsel Alt Text",inAlt,inAlt?"En az bir görselde var":"Alt text'e ekleyin")}
-      ${inH2?chk("","H2 Başlık (bonus)",true,"H2'de de geçiyor"):""}
+      ${chk("",t("kwPageTitle"),inTitle,inTitle?m.title.substring(0,60):t("kwAddTitle"))}
+      ${chk("",t("kwMetaDesc"),inDesc,inDesc?"":t("kwAddDesc"))}
+      ${chk("",t("kwH1"),inH1,inH1?"":(h.h1||[])[0]?.text?.substring(0,50)||t("kwAddH1"))}
+      ${chk("",t("kwUrl"),inUrl,inUrl?"":t("kwAddUrl"))}
+      ${chk("",t("kwAlt"),inAlt,inAlt?t("kwOneImage"):t("kwAddAlt"))}
+      ${inH2?chk("",t("kwH2Bonus"),true,t("kwH2Found")):""}
       <div class="row" style="margin-top:6px"><div class="row-body">
-        <div class="row-label">İçerik Yoğunluğu</div>
-        <div class="row-value ${density>0&&density<=3?"success":density>3?"warn":"missing"}">${density>0?`%${density} (${kwEntry?.count||0} kez)`:"İçerikte bulunamadı"}</div>
-        ${density>0?'<div style="font-size:10px;color:var(--text3)">İdeal: %0.5 – %3</div>':""}
+        <div class="row-label">${t("kwDensity")}</div>
+        <div class="row-value ${density>0&&density<=3?"success":density>3?"warn":"missing"}">${density>0?t("kwFound",density,kwEntry?.count||0):t("kwNotFound")}</div>
+        ${density>0?`<div style="font-size:10px;color:var(--text3)">${t("kwDensityIdeal")}</div>`:""}
       </div></div>`;
   };
 
@@ -731,8 +733,6 @@ function renderTechnical(technical, tech, headers, pagination, jsSeo) {
   // HTTP Headers block
   let headersBlock = "";
   if (headers && !headers.error) {
-    const statusCls = headers.status>=200&&headers.status<300?"ok":headers.status>=300&&headers.status<400?"warn":"fail";
-    const hEntries = Object.entries(headers.headers||{});
     const secHeaders = ["strict-transport-security","x-frame-options","x-content-type-options","content-security-policy","referrer-policy","permissions-policy"];
     const secPresent = secHeaders.filter(h=>headers.headers[h]);
     const xRobots = headers.headers["x-robots-tag"];
@@ -741,15 +741,15 @@ function renderTechnical(technical, tech, headers, pagination, jsSeo) {
       <div class="section">
         <div class="section-header"><h3>🌐 HTTP Response</h3></div>
         <div class="section-body">
-          ${chk("📡","HTTP Status",headers.status>=200&&headers.status<400,`${headers.status}`,headers.finalUrl!==analysisData?.meta?.url?`Yönlendirme → ${headers.finalUrl?.substring(0,60)}`:"")}
-          ${headers.redirected?chk("↪️","Yönlendirme","warn","Var",headers.httpsRedirect?"HTTP→HTTPS yönlendirmesi":headers.wwwChange?"www değişikliği":"Yönlendirme tespit edildi"):""}
+          ${chk("📡","HTTP Status",headers.status>=200&&headers.status<400,`${headers.status}`,headers.finalUrl!==analysisData?.meta?.url?t("techRedirectTo",headers.finalUrl?.substring(0,60)):"")}
+          ${headers.redirected?chk("↪️",t("techRedirectPresent"),"warn",t("techRedirectPresent"),headers.httpsRedirect?t("techHTTPSRedirect"):headers.wwwChange?t("techWWWChange"):t("techRedirectDetected")):""}
           ${xRobots?chk("🤖","X-Robots-Tag",/noindex/i.test(xRobots)?false:"warn",xRobots):""}
-          ${headers.headers["content-encoding"]?chk("📦","Sıkıştırma (Gzip/Brotli)",true,headers.headers["content-encoding"]):""}
-          ${chk("🔒","HSTS",!!headers.headers["strict-transport-security"],headers.headers["strict-transport-security"]?"✓ Var":"✕ Yok")}
-          ${chk("🛡️","X-Frame-Options",!!headers.headers["x-frame-options"],headers.headers["x-frame-options"]||"Yok")}
-          ${chk("🔑","Cache-Control",headers.headers["cache-control"]?"info":"info",headers.headers["cache-control"]||"Tanımlı değil")}
-          ${headers.headers["server"]?chk("🖥️","Server",headers.headers["x-powered-by"]?"warn":"info",`${headers.headers["server"]}${headers.headers["x-powered-by"]?" / "+headers.headers["x-powered-by"]:""}`,headers.headers["x-powered-by"]?"Sunucu teknolojisi açık — güvenlik riski":""):""}
-          <div style="margin-top:6px;font-size:10px;color:var(--text3);font-family:var(--mono)">${secPresent.length}/6 güvenlik header'ı mevcut</div>
+          ${headers.headers["content-encoding"]?chk("📦",t("techCompression"),true,headers.headers["content-encoding"]):""}
+          ${chk("🔒","HSTS",!!headers.headers["strict-transport-security"],headers.headers["strict-transport-security"]?t("techHSTSPresent"):t("techHSTSAbsent"))}
+          ${chk("🛡️","X-Frame-Options",!!headers.headers["x-frame-options"],headers.headers["x-frame-options"]||t("techNone"))}
+          ${chk("🔑","Cache-Control",headers.headers["cache-control"]?"info":"info",headers.headers["cache-control"]||t("techCacheUndefined"))}
+          ${headers.headers["server"]?chk("🖥️","Server",headers.headers["x-powered-by"]?"warn":"info",`${headers.headers["server"]}${headers.headers["x-powered-by"]?" / "+headers.headers["x-powered-by"]:""}`,headers.headers["x-powered-by"]?t("techServerWarn"):""):""}
+          <div style="margin-top:6px;font-size:10px;color:var(--text3);font-family:var(--mono)">${t("techSecHeaders",secPresent.length)}</div>
         </div>
       </div>`;
   }
@@ -759,11 +759,11 @@ function renderTechnical(technical, tech, headers, pagination, jsSeo) {
   if (pagination?.hasPagination) {
     paginationBlock = `
       <div class="section">
-        <div class="section-header"><h3>📄 Sayfalama (Pagination)</h3></div>
+        <div class="section-header"><h3>📄 ${t("techPaginationTitle")}</h3></div>
         <div class="section-body">
           ${pagination.prev?chk("◀","rel=prev",true,pagination.prev.substring(0,50)):""}
           ${pagination.next?chk("▶","rel=next",true,pagination.next.substring(0,50)):""}
-          ${pagination.paginatedWithSelfCanonical?chk("⚠️","Canonical","warn","Self-canonical","Sayfalanmış sayfada self-canonical sorunlu olabilir"):""}
+          ${pagination.paginatedWithSelfCanonical?chk("⚠️","Canonical","warn","Self-canonical",t("techPaginSelfCanon")):""}
         </div>
       </div>`;
   }
@@ -773,12 +773,12 @@ function renderTechnical(technical, tech, headers, pagination, jsSeo) {
   if (jsSeo) {
     jsSeoBlock = `
       <div class="section">
-        <div class="section-header" data-toggle-section="1"><h3>⚡ JavaScript SEO</h3><span class="chevron">▼</span></div>
+        <div class="section-header" data-toggle-section="1"><h3>⚡ ${t("techJSSEOTitle")}</h3><span class="chevron">▼</span></div>
         <div class="section-body">
-          ${jsSeo.frameworks.length>0?chk("🏗️","JS Framework tespit edildi","info",jsSeo.frameworks.join(", ")):""}
-          ${chk("📄","Noscript tag",jsSeo.hasNoscript,jsSeo.hasNoscript?`✓ ${jsSeo.noscriptCount} adet`:"✕ Yok",!jsSeo.hasNoscript&&jsSeo.frameworks.length>0?"JS devre dışıyken içerik gösterilmiyor olabilir":"")}
-          ${jsSeo.likelySPA?chk("⚠️","SPA Riski","warn","Dikkat","Sayfa içeriği çok az — JS ile render ediliyor olabilir, bot erişimi kontrol edin"):""}
-          ${chk("📝","Görünür metin uzunluğu","info",`${jsSeo.bodyTextLength} karakter`)}
+          ${jsSeo.frameworks.length>0?chk("🏗️",t("techFrameworkFound"),"info",jsSeo.frameworks.join(", ")):""}
+          ${chk("📄","Noscript tag",jsSeo.hasNoscript,jsSeo.hasNoscript?t("techNoscriptPresent",jsSeo.noscriptCount):t("techNoscriptAbsent"),!jsSeo.hasNoscript&&jsSeo.frameworks.length>0?t("techNoscriptWarn"):"")}
+          ${jsSeo.likelySPA?chk("⚠️",t("techSPARisk"),"warn","!",t("techSPAWarn")):""}
+          ${chk("📝",t("techBodyLength"),"info",t("techBodyChars",jsSeo.bodyTextLength))}
         </div>
       </div>`;
   }
@@ -786,45 +786,45 @@ function renderTechnical(technical, tech, headers, pagination, jsSeo) {
   const robots = tech?.robotsTxt, sitemap = tech?.sitemapXml;
   el.innerHTML = `
     <div class="section">
-      <div class="section-header"><h3>🔒 Güvenlik & İndeksleme</h3></div>
+      <div class="section-header"><h3>🔒 ${t("techSecTitle")}</h3></div>
       <div class="section-body">
-        ${chk("🔒","HTTPS",technical.hasHttps,technical.hasHttps?"✓ HTTPS":"✕ HTTP")}
-        ${chk("🤖","Noindex",!technical.noindex,technical.noindex?"ENGELLENIYOR":"✓ İndekslenebilir",technical.noindex?"Bu sayfa arama sonuçlarında görünmez!":"")}
-        ${chk("🚫","Nofollow (meta)",!technical.nofollow,technical.nofollow?"Var":"✓ Yok")}
+        ${chk("🔒","HTTPS",technical.hasHttps,technical.hasHttps?t("techHttpsOk"):t("techHttpsFail"))}
+        ${chk("🤖","Noindex",!technical.noindex,technical.noindex?t("techBlocked"):t("techIndexable"),technical.noindex?t("techNoindexWarn"):"")}
+        ${chk("🚫","Nofollow (meta)",!technical.nofollow,technical.nofollow?t("techPresent"):t("techAbsent"))}
       </div>
     </div>
     <div class="section">
-      <div class="section-header"><h3>🕷️ Crawlability</h3></div>
+      <div class="section-header"><h3>🕷️ ${t("techCrawlTitle")}</h3></div>
       <div class="section-body">
-        ${chk("📄","robots.txt",!robots?"info":robots.accessible?(!robots.pageDisallowed):false,!robots?"?":robots.accessible?"✓ Erişilebilir":`✕ HTTP ${robots.status}`,robots?.pageDisallowed?"⚠ Bu sayfa robots.txt'te engellenmiş!":robots?.isDisallowAll?"⚠ Disallow: / — Tüm site!":robots?.hasSitemap?"Sitemap referansı var":"")}
-        ${chk("🗺️","sitemap.xml",!sitemap?"info":sitemap.accessible,!sitemap?"?":sitemap.accessible?"✓ Mevcut":"✕ Bulunamadı",sitemap?.accessible?sitemap.url?.replace(/^https?:\/\/[^/]+/,"")||"":"")}
-        ${robots?.sitemapUrls?.length>0?`<div class="tech-check"><span class="tc-icon">🔗</span><div style="flex:1"><div class="tc-label">Sitemap URL'leri</div>${robots.sitemapUrls.map(u=>`<div class="tc-sub">${esc(u.substring(0,70))}</div>`).join("")}</div></div>`:""}
+        ${chk("📄","robots.txt",!robots?"info":robots.accessible?(!robots.pageDisallowed):false,!robots?"?":robots.accessible?t("techAccessible"):`✕ HTTP ${robots.status}`,robots?.pageDisallowed?t("techRobotsBlocked"):robots?.isDisallowAll?t("techDisallowAll"):robots?.hasSitemap?t("techSitemapRef"):"")}
+        ${chk("🗺️","sitemap.xml",!sitemap?"info":sitemap.accessible,!sitemap?"?":sitemap.accessible?t("techAccessible"):t("techNotFound"),sitemap?.accessible?sitemap.url?.replace(/^https?:\/\/[^/]+/,"")||"":"")}
+        ${robots?.sitemapUrls?.length>0?`<div class="tech-check"><span class="tc-icon">🔗</span><div style="flex:1"><div class="tc-label">${t("techSitemapUrls")}</div>${robots.sitemapUrls.map(u=>`<div class="tc-sub">${esc(u.substring(0,70))}</div>`).join("")}</div></div>`:""}
       </div>
     </div>
     <div class="section">
-      <div class="section-header"><h3>🌐 Sayfa Özellikleri</h3></div>
+      <div class="section-header"><h3>🌐 ${t("techPageTitle")}</h3></div>
       <div class="section-body">
-        ${chk("❤️","Favicon",technical.favicon,technical.favicon?"✓ Var":"✕ Yok")}
-        ${chk("📱","Viewport",technical.hasViewport,technical.hasViewport?"✓ Tanımlı":"✕ Eksik")}
-        ${chk("🗣️","HTML lang",!!technical.lang,technical.lang?`✓ ${technical.lang}`:"✕ Eksik")}
-        ${chk("🔗","Canonical",!!analysisData?.meta?.canonical,analysisData?.meta?.canonicalIsSelf?"✓ Self-canonical":analysisData?.meta?.canonicalIsExternal?"⚠ Harici":analysisData?.meta?.canonical?"✓ Var":"✕ Yok")}
-        ${chk("⚡","AMP",technical.ampUrl?"info":"info",technical.ampUrl?"✓ Var":"Yok")}
-        ${technical.hreflang?.length>0?`<div class="tech-check"><span class="tc-icon">🌍</span><div style="flex:1"><div class="tc-label">Hreflang (${technical.hreflang.length} dil)</div><div style="margin-top:4px;display:flex;flex-wrap:wrap">${technical.hreflang.map(h=>`<span class="hreflang-item">${esc(h.lang)}</span>`).join("")}</div></div></div>`:chk("🌍","Hreflang","info","Yok")}
+        ${chk("❤️","Favicon",technical.favicon,technical.favicon?t("techPresent"):t("techAbsent"))}
+        ${chk("📱","Viewport",technical.hasViewport,technical.hasViewport?t("techPresent"):t("techAbsent"))}
+        ${chk("🗣️","HTML lang",!!technical.lang,technical.lang?`✓ ${technical.lang}`:t("techAbsent"))}
+        ${chk("🔗","Canonical",!!analysisData?.meta?.canonical,analysisData?.meta?.canonicalIsSelf?t("techSelfCanon"):analysisData?.meta?.canonicalIsExternal?t("techExtCanon"):analysisData?.meta?.canonical?t("techCanonPresent"):t("techCanonAbsent"))}
+        ${chk("⚡","AMP",technical.ampUrl?"info":"info",technical.ampUrl?t("techPresent"):t("techNone"))}
+        ${technical.hreflang?.length>0?`<div class="tech-check"><span class="tc-icon">🌍</span><div style="flex:1"><div class="tc-label">${t("techHreflang",technical.hreflang.length)}</div><div style="margin-top:4px;display:flex;flex-wrap:wrap">${technical.hreflang.map(h=>`<span class="hreflang-item">${esc(h.lang)}</span>`).join("")}</div></div></div>`:chk("🌍",t("techHreflangNone"),"info",t("techNone"))}
       </div>
     </div>
     ${headersBlock}
     ${paginationBlock}
     ${jsSeoBlock}
     <div class="section">
-      <div class="section-header" data-toggle-section="1"><h3>📦 Sayfa Kaynakları</h3><span class="chevron">▼</span></div>
+      <div class="section-header" data-toggle-section="1"><h3>📦 ${t("techResourcesTitle")}</h3><span class="chevron">▼</span></div>
       <div class="section-body">
         <div class="metric-grid">
-          <div class="metric-card"><div class="m-label">SCRIPT</div><div class="m-val">${technical.scripts}</div></div>
-          <div class="metric-card"><div class="m-label">STİLSHEET</div><div class="m-val">${technical.stylesheets}</div></div>
-          <div class="metric-card ${technical.iFrames>0?"warn":""}"><div class="m-label">IFRAME</div><div class="m-val">${technical.iFrames}</div></div>
-          <div class="metric-card"><div class="m-label">PRELOAD</div><div class="m-val">${technical.resourceHints?.preload||0}</div></div>
-          <div class="metric-card"><div class="m-label">PRECONNECT</div><div class="m-val">${technical.resourceHints?.preconnect||0}</div></div>
-          <div class="metric-card ${technical.inlineStyles>50?"warn":""}"><div class="m-label">INLINE STYLE</div><div class="m-val">${technical.inlineStyles}</div></div>
+          <div class="metric-card"><div class="m-label">${t("techScriptLabel")}</div><div class="m-val">${technical.scripts}</div></div>
+          <div class="metric-card"><div class="m-label">${t("techStyleLabel")}</div><div class="m-val">${technical.stylesheets}</div></div>
+          <div class="metric-card ${technical.iFrames>0?"warn":""}"><div class="m-label">${t("techIframeLabel")}</div><div class="m-val">${technical.iFrames}</div></div>
+          <div class="metric-card"><div class="m-label">${t("techPreloadLabel")}</div><div class="m-val">${technical.resourceHints?.preload||0}</div></div>
+          <div class="metric-card"><div class="m-label">${t("techPreconnLabel")}</div><div class="m-val">${technical.resourceHints?.preconnect||0}</div></div>
+          <div class="metric-card ${technical.inlineStyles>50?"warn":""}"><div class="m-label">${t("techInlineLabel")}</div><div class="m-val">${technical.inlineStyles}</div></div>
         </div>
       </div>
     </div>`;
@@ -835,31 +835,31 @@ function renderTechnical(technical, tech, headers, pagination, jsSeo) {
 function renderMeta(m) {
   const el = document.getElementById("panel-meta");
   const tc = (len,min,max) => len>=min&&len<=max?"success":len===0?"danger":"warn";
-  const cn = m.canonicalIsExternal?" ⚠ Harici domain":m.canonicalIsSelf?" ✓ Self-canonical":"";
+  const cn = m.canonicalIsExternal?t("metaExternal"):m.canonicalIsSelf?t("metaSelfCanon"):"";
   el.innerHTML = `
-    <div class="section"><div class="section-header" data-toggle-section="1"><h3>🏷️ Temel Meta</h3><span class="chevron">▼</span></div><div class="section-body">
-      ${mRow("Sayfa Başlığı",m.title,tc(m.titleLength,30,60),m.titleLength,60,"30–60 karakter")}
-      ${mRow("Meta Açıklama",m.metaDesc,tc(m.metaDescLength,70,160),m.metaDescLength,160,"70–160 karakter")}
-      ${mRow("Canonical URL",m.canonical?(m.canonical+cn):"",m.canonical?(m.canonicalIsExternal?"warn":"success"):"missing")}
-      ${mRow("Robots",m.robots||"(tanımsız — varsayılan index,follow)",m.robots?"":"missing")}
-      ${mRow("Dil (lang)",m.lang,m.lang?"success":"danger")}
-      ${mRow("Charset",m.charset,m.charset?"success":"missing")}
-      ${mRow("Viewport",m.viewport,m.viewport?"success":"danger")}
-      ${mRow("HTTPS",m.hasHttps?"✅ Aktif":"❌ HTTP",m.hasHttps?"success":"danger")}
-      ${mRow("Keywords",m.metaKeywords||"(yok)",m.metaKeywords?"":"missing")}
+    <div class="section"><div class="section-header" data-toggle-section="1"><h3>🏷️ ${t("metaBasic")}</h3><span class="chevron">▼</span></div><div class="section-body">
+      ${mRow(t("metaPageTitle"),m.title,tc(m.titleLength,30,60),m.titleLength,60,"30–60 "+t("metaCharRange",""))}
+      ${mRow(t("metaDesc"),m.metaDesc,tc(m.metaDescLength,70,160),m.metaDescLength,160,"70–160 "+t("metaCharRange",""))}
+      ${mRow(t("metaCanonical"),m.canonical?(m.canonical+cn):"",m.canonical?(m.canonicalIsExternal?"warn":"success"):"missing")}
+      ${mRow(t("metaRobots"),m.robots||t("metaRobotsDefault"),m.robots?"":"missing")}
+      ${mRow(t("metaLang"),m.lang,m.lang?"success":"danger")}
+      ${mRow(t("metaCharset"),m.charset,m.charset?"success":"missing")}
+      ${mRow(t("metaViewport"),m.viewport,m.viewport?"success":"danger")}
+      ${mRow(t("metaHTTPS"),m.hasHttps?t("metaHttpsActive"):t("metaHttpsInactive"),m.hasHttps?"success":"danger")}
+      ${mRow(t("metaKeywords"),m.metaKeywords||t("metaKeywordsNone"),m.metaKeywords?"":"missing")}
     </div></div>
-    <div class="section"><div class="section-header" data-toggle-section="1"><h3>📘 Open Graph</h3><span class="chevron">▼</span></div><div class="section-body">
+    <div class="section"><div class="section-header" data-toggle-section="1"><h3>📘 ${t("metaOG")}</h3><span class="chevron">▼</span></div><div class="section-body">
       ${mRow("og:title",m.ogTitle)} ${mRow("og:description",m.ogDesc)} ${mRow("og:image",m.ogImage)} ${mRow("og:type",m.ogType)} ${mRow("og:url",m.ogUrl)}
     </div></div>
-    <div class="section"><div class="section-header" data-toggle-section="1"><h3>🐦 Twitter Card</h3><span class="chevron">▼</span></div><div class="section-body">
+    <div class="section"><div class="section-header" data-toggle-section="1"><h3>🐦 ${t("metaTwitter")}</h3><span class="chevron">▼</span></div><div class="section-body">
       ${mRow("twitter:card",m.twitterCard)} ${mRow("twitter:title",m.twitterTitle)} ${mRow("twitter:description",m.twitterDesc)} ${mRow("twitter:image",m.twitterImage)}
     </div></div>`;
 }
 
 function mRow(label, value, cls="", len=0, max=0, hint="") {
-  const empty = !value||value==="(yok)";
-  const bar = max>0&&len>0?`<div class="char-bar"><div class="char-bar-fill" style="width:${Math.min(100,(len/max)*100)}%;background:${len<=max?"#00e5c0":"#ff6b6b"}"></div></div><span style="font-size:10px;color:var(--text3)">${len} karakter${hint?` — ${hint}`:""}</span>`:"";
-  return `<div class="row"><div class="row-body"><div class="row-label">${label}</div><div class="row-value ${empty?"missing":cls}">${empty?"(tanımsız)":esc(value.substring(0,200))}</div>${bar}</div></div>`;
+  const empty = !value||value===t("metaKeywordsNone");
+  const bar = max>0&&len>0?`<div class="char-bar"><div class="char-bar-fill" style="width:${Math.min(100,(len/max)*100)}%;background:${len<=max?"#00e5c0":"#ff6b6b"}"></div></div><span style="font-size:10px;color:var(--text3)">${t("metaCharCount",len)}${hint?` — ${hint}`:""}</span>`:"";
+  return `<div class="row"><div class="row-body"><div class="row-label">${label}</div><div class="row-value ${empty?"missing":cls}">${empty?t("metaUndefined"):esc(value.substring(0,200))}</div>${bar}</div></div>`;
 }
 
 // ─── CONTENT ─────────────────────────────────────────────────────────────────
@@ -871,26 +871,26 @@ function renderContent(c) {
   const rc = rs>=80?"#00e5c0":rs>=60?"#ffd166":"#ff6b6b";
   const wc = c.wordCount; const wco = wc>=600?"#00e5c0":wc>=300?"#ffd166":"#ff6b6b";
   el.innerHTML = `
-    <div class="section"><div class="section-header"><h3>📊 İçerik Özeti</h3></div><div class="section-body">
-      <div style="font-size:10px;color:var(--text3);font-family:var(--mono);margin-bottom:6px">Kaynak: &lt;${c.contentAreaUsed}&gt; (nav/header/footer hariç)</div>
+    <div class="section"><div class="section-header"><h3>📊 ${t("contentSummary")}</h3></div><div class="section-body">
+      <div style="font-size:10px;color:var(--text3);font-family:var(--mono);margin-bottom:6px">${t("contentSource",c.contentAreaUsed)}</div>
       <div class="content-grid">
-        <div class="content-stat"><div class="cs-val" style="color:${wco}">${wc}</div><div class="cs-label">KELİME</div></div>
-        <div class="content-stat"><div class="cs-val">${c.sentences}</div><div class="cs-label">CÜMLE</div></div>
-        <div class="content-stat"><div class="cs-val">${c.paragraphs}</div><div class="cs-label">PARAGRAF</div></div>
-        <div class="content-stat"><div class="cs-val">${c.readingTimeMin}</div><div class="cs-label">DAKİKA</div></div>
-        <div class="content-stat"><div class="cs-val">${c.avgSentenceWords}</div><div class="cs-label">KEL/CÜMLE</div></div>
-        <div class="content-stat"><div class="cs-val" style="color:${wco}">${wc>=600?"✓":wc>=300?"~":"✗"}</div><div class="cs-label">600+KEL</div></div>
+        <div class="content-stat"><div class="cs-val" style="color:${wco}">${wc}</div><div class="cs-label">${t("contentWords")}</div></div>
+        <div class="content-stat"><div class="cs-val">${c.sentences}</div><div class="cs-label">${t("contentSentences")}</div></div>
+        <div class="content-stat"><div class="cs-val">${c.paragraphs}</div><div class="cs-label">${t("contentParagraphs")}</div></div>
+        <div class="content-stat"><div class="cs-val">${c.readingTimeMin}</div><div class="cs-label">${t("contentMinutes")}</div></div>
+        <div class="content-stat"><div class="cs-val">${c.avgSentenceWords}</div><div class="cs-label">${t("contentWPS")}</div></div>
+        <div class="content-stat"><div class="cs-val" style="color:${wco}">${wc>=600?"✓":wc>=300?"~":"✗"}</div><div class="cs-label">${t("content600")}</div></div>
       </div>
     </div></div>
-    <div class="section"><div class="section-header"><h3>📖 Okunabilirlik</h3></div><div class="section-body">
+    <div class="section"><div class="section-header"><h3>📖 ${t("contentReadability")}</h3></div><div class="section-body">
       <div class="row"><div class="row-body">
-        <div class="row-label">Ort. ${c.avgSentenceWords} kelime/cümle (ideal ≤15)</div>
+        <div class="row-label">${t("contentReadAvg",c.avgSentenceWords)}</div>
         <div class="readability-bar"><div class="readability-fill" style="width:${rs}%"></div></div>
-        <span style="font-size:11px;color:${rc};font-family:var(--mono);font-weight:700">${rs>=80?"Kolay":rs>=60?"Orta":"Zor"} Okunabilirlik</span>
+        <span style="font-size:11px;color:${rc};font-family:var(--mono);font-weight:700">${rs>=80?t("contentEasy"):rs>=60?t("contentMedium"):t("contentHard")} ${t("contentReadability")}</span>
       </div></div>
     </div></div>
-    <div class="section"><div class="section-header" data-toggle-section="1"><h3>🔑 Kelime Sıklığı</h3><span class="badge" style="background:var(--bg3);color:var(--text2)">${c.topKeywords.length}</span><span class="chevron">▼</span></div><div class="section-body">
-      ${c.topKeywords.map((k,i)=>`<div class="kw-item"><span class="kw-rank">${i+1}</span><span class="kw-word">${esc(k.word)}</span><div class="kw-bar-wrap"><div class="kw-bar"><div class="kw-bar-fill" style="width:${(k.count/max)*100}%"></div></div></div><span class="kw-meta">${k.count}× %${k.density}</span></div>`).join("")||'<p style="color:var(--text3);font-size:12px">Veri yok.</p>'}
+    <div class="section"><div class="section-header" data-toggle-section="1"><h3>🔑 ${t("contentKeywords")}</h3><span class="badge" style="background:var(--bg3);color:var(--text2)">${c.topKeywords.length}</span><span class="chevron">▼</span></div><div class="section-body">
+      ${c.topKeywords.map((k,i)=>`<div class="kw-item"><span class="kw-rank">${i+1}</span><span class="kw-word">${esc(k.word)}</span><div class="kw-bar-wrap"><div class="kw-bar"><div class="kw-bar-fill" style="width:${(k.count/max)*100}%"></div></div></div><span class="kw-meta">${k.count}× %${k.density}</span></div>`).join("")||`<p style="color:var(--text3);font-size:12px">${t("contentNoData")}</p>`}
     </div></div>`;
 }
 
@@ -900,23 +900,23 @@ function renderHeadings(h) {
   const el = document.getElementById("panel-headings");
   const h1c = h.h1?.length||0;
   let warns = "";
-  if (!h1c) warns+=`<div class="issue-item"><span class="issue-icon">🔴</span><div class="issue-body"><div class="issue-title">H1 başlık yok</div></div></div>`;
-  else if (h1c>1) warns+=`<div class="issue-item"><span class="issue-icon">🟡</span><div class="issue-body"><div class="issue-title">${h1c} adet H1 — sadece 1 olmalı</div></div></div>`;
-  if (h.h1MatchesTitle) warns+=`<div class="issue-item"><span class="issue-icon">🟢</span><div class="issue-body"><div class="issue-title">H1 ile sayfa başlığı uyumlu</div></div></div>`;
-  else if (h1c>0) warns+=`<div class="issue-item"><span class="issue-icon">🟡</span><div class="issue-body"><div class="issue-title">H1 ile başlık örtüşmüyor — önerilir</div></div></div>`;
-  if (h.orderSkips>0) warns+=`<div class="issue-item"><span class="issue-icon">🟡</span><div class="issue-body"><div class="issue-title">${h.orderSkips} başlık seviye atlaması (H1→H3 gibi)</div></div></div>`;
+  if (!h1c) warns+=`<div class="issue-item"><span class="issue-icon">🔴</span><div class="issue-body"><div class="issue-title">${t("headingsNoH1")}</div></div></div>`;
+  else if (h1c>1) warns+=`<div class="issue-item"><span class="issue-icon">🟡</span><div class="issue-body"><div class="issue-title">${t("headingsMultiH1",h1c)}</div></div></div>`;
+  if (h.h1MatchesTitle) warns+=`<div class="issue-item"><span class="issue-icon">🟢</span><div class="issue-body"><div class="issue-title">${t("headingsTitleMatch")}</div></div></div>`;
+  else if (h1c>0) warns+=`<div class="issue-item"><span class="issue-icon">🟡</span><div class="issue-body"><div class="issue-title">${t("headingsTitleMismatch")}</div></div></div>`;
+  if (h.orderSkips>0) warns+=`<div class="issue-item"><span class="issue-icon">🟡</span><div class="issue-body"><div class="issue-title">${t("headingsOrderSkips",h.orderSkips)}</div></div></div>`;
 
   let rows="";
-  for(let i=1;i<=6;i++) (h[`h${i}`]||[]).forEach(item=>{rows+=`<div class="heading-item" style="padding-left:${(i-1)*10}px"><span class="h-tag h${i}">H${i}</span><span class="h-text">${esc(item.text)||"<i style='color:var(--text3)'>(boş)</i>"}</span></div>`;});
+  for(let i=1;i<=6;i++) (h[`h${i}`]||[]).forEach(item=>{rows+=`<div class="heading-item" style="padding-left:${(i-1)*10}px"><span class="h-tag h${i}">H${i}</span><span class="h-text">${esc(item.text)||`<i style='color:var(--text3)'>(${t("headingsEmpty")})</i>`}</span></div>`;});
   const tot=[1,2,3,4,5,6].reduce((s,i)=>s+(h[`h${i}`]?.length||0),0);
 
   el.innerHTML = `
-    <div class="section"><div class="section-header"><h3>📝 Başlık Analizi</h3></div><div class="section-body">
+    <div class="section"><div class="section-header"><h3>📝 ${t("headingsTitle")}</h3></div><div class="section-body">
       ${warns}
       <div class="metric-grid">${[1,2,3,4,5,6].map(i=>`<div class="metric-card ${i===1&&(h[`h${i}`]?.length||0)===1?"good":i===1?"bad":""}"><div class="m-label">H${i}</div><div class="m-val">${h[`h${i}`]?.length||0}</div></div>`).join("")}</div>
     </div></div>
-    <div class="section"><div class="section-header" data-toggle-section="1"><h3>🗂️ Başlık Ağacı</h3><span class="badge" style="background:var(--bg3);color:var(--text2)">${tot}</span><span class="chevron">▼</span></div>
-    <div class="section-body">${rows||'<p style="color:var(--text3);font-size:12px">Başlık bulunamadı.</p>'}</div></div>`;
+    <div class="section"><div class="section-header" data-toggle-section="1"><h3>🗂️ ${t("headingsTree")}</h3><span class="badge" style="background:var(--bg3);color:var(--text2)">${tot}</span><span class="chevron">▼</span></div>
+    <div class="section-body">${rows||`<p style="color:var(--text3);font-size:12px">${t("headingsNone")}</p>`}</div></div>`;
 }
 
 // ─── PERFORMANCE ─────────────────────────────────────────────────────────────
@@ -925,21 +925,21 @@ function renderPerformance(perf, psi) {
   const el = document.getElementById("panel-perf");
   const gr = (v,g,m) => v==null?"":v<=g?"good":v<=m?"warn":"bad";
   const co = c => c==="good"?"#00e5c0":c==="warn"?"#ffd166":c==="bad"?"#ff6b6b":"var(--text2)";
-  const lb = c => c==="good"?"İyi":c==="warn"?"Geliştir":c==="bad"?"Yavaş":"—";
+  const lb = c => c==="good"?t("perfGood"):c==="warn"?t("perfImprove"):c==="bad"?t("perfSlow"):"—";
   const fmt = ms => ms==null?"—":ms>=1000?(ms/1000).toFixed(1):ms;
   const u = ms => ms==null?"":ms>=1000?"s":"ms";
 
   let psiBlock = "";
   if (psi&&!psi.error) {
     const metricCard=(label,val,score)=>{const c=score==null?"":score>=0.9?"good":score>=0.5?"warn":"bad";return`<div class="metric-card ${c}"><div class="m-label">${label}</div><div class="m-val" style="font-size:14px">${val||"—"}</div><div class="m-status" style="color:${co(c)}">${lb(c)}</div></div>`;};
-    psiBlock=`<div class="section"><div class="section-header"><h3>🚀 PageSpeed Lab (Mobil)</h3></div><div class="section-body">
+    psiBlock=`<div class="section"><div class="section-header"><h3>🚀 ${t("perfPSITitle")}</h3></div><div class="section-body">
       <div class="metric-grid">${metricCard("FCP",psi.metrics.fcp,psi.metrics.fcpScore)}${metricCard("LCP",psi.metrics.lcp,psi.metrics.lcpScore)}${metricCard("TBT",psi.metrics.tbt,null)}${metricCard("CLS",psi.metrics.cls,null)}${metricCard("Speed Index",psi.metrics.si,null)}${metricCard("TTI",psi.metrics.tti,null)}</div>
       ${psi.fieldData?`<div style="margin-top:8px;padding:8px;background:var(--bg3);border-radius:6px;border:1px solid var(--border);font-size:11px;color:var(--text2)">🌍 CrUX: LCP ${psi.fieldData.lcpMs}ms (${psi.fieldData.lcpCategory})</div>`:""}
     </div></div>
-    ${psi.opportunities?.length?`<div class="section"><div class="section-header" data-toggle-section="1"><h3>💡 Fırsatlar (PSI)</h3><span class="chevron">▼</span></div><div class="section-body">${psi.opportunities.map(o=>`<div class="issue-item"><span class="issue-icon">${o.score<0.5?"🔴":"🟡"}</span><div class="issue-body"><div class="issue-title">${esc(o.title)}</div>${o.displayValue?`<div class="issue-desc">${esc(o.displayValue)}</div>`:""}</div></div>`).join("")}</div></div>`:""}`;
+    ${psi.opportunities?.length?`<div class="section"><div class="section-header" data-toggle-section="1"><h3>💡 ${t("perfOpportunities")}</h3><span class="chevron">▼</span></div><div class="section-body">${psi.opportunities.map(o=>`<div class="issue-item"><span class="issue-icon">${o.score<0.5?"🔴":"🟡"}</span><div class="issue-body"><div class="issue-title">${esc(o.title)}</div>${o.displayValue?`<div class="issue-desc">${esc(o.displayValue)}</div>`:""}</div></div>`).join("")}</div></div>`:""}`;
   }
 
-  if (!perf) { el.innerHTML = psiBlock+`<div class="empty-state"><div class="icon">⚡</div><h3>Tarayıcı verisi alınamadı</h3></div>`; return; }
+  if (!perf) { el.innerHTML = psiBlock+`<div class="empty-state"><div class="icon">⚡</div><h3>${t("perfNoData")}</h3></div>`; return; }
 
   const fcpC=gr(perf.fcp,1800,3000),lcpC=gr(perf.lcp,2500,4000),ttfbC=gr(perf.ttfb,600,1500),domC=gr(perf.domLoad,1500,3000);
   const clsC=perf.cls==null?"":perf.cls<=0.1?"good":perf.cls<=0.25?"warn":"bad";
@@ -947,26 +947,26 @@ function renderPerformance(perf, psi) {
   const maxR=Math.max(...Object.values(perf.resourceBreakdown||{}),1);
 
   el.innerHTML = psiBlock+`
-    <div class="section"><div class="section-header"><h3>⚡ Tarayıcı Ölçümü</h3></div><div class="section-body">
+    <div class="section"><div class="section-header"><h3>⚡ ${t("perfBrowser")}</h3></div><div class="section-body">
       <div class="metric-grid">
         <div class="metric-card ${fcpC}"><div class="m-label">FCP</div><div class="m-val">${fmt(perf.fcp)}<span class="m-unit">${u(perf.fcp)}</span></div><div class="m-status" style="color:${co(fcpC)}">${lb(fcpC)} · &lt;1.8s</div></div>
         <div class="metric-card ${lcpC}"><div class="m-label">LCP</div><div class="m-val">${fmt(perf.lcp)}<span class="m-unit">${u(perf.lcp)}</span></div><div class="m-status" style="color:${co(lcpC)}">${lb(lcpC)} · &lt;2.5s</div></div>
         <div class="metric-card ${ttfbC}"><div class="m-label">TTFB</div><div class="m-val">${fmt(perf.ttfb)}<span class="m-unit">${u(perf.ttfb)}</span></div><div class="m-status" style="color:${co(ttfbC)}">${lb(ttfbC)} · &lt;600ms</div></div>
         <div class="metric-card ${clsC}"><div class="m-label">CLS</div><div class="m-val" style="font-size:15px">${perf.cls??"-"}</div><div class="m-status" style="color:${co(clsC)}">${clsC?lb(clsC):"—"} · &lt;0.1</div></div>
         <div class="metric-card ${domC}"><div class="m-label">DOM</div><div class="m-val">${fmt(perf.domLoad)}<span class="m-unit">${u(perf.domLoad)}</span></div><div class="m-status" style="color:${co(domC)}">${lb(domC)}</div></div>
-        <div class="metric-card"><div class="m-label">TAM YÜK</div><div class="m-val">${fmt(perf.fullLoad)}<span class="m-unit">${u(perf.fullLoad)}</span></div></div>
+        <div class="metric-card"><div class="m-label">${t("perfFullLoad")}</div><div class="m-val">${fmt(perf.fullLoad)}<span class="m-unit">${u(perf.fullLoad)}</span></div></div>
       </div>
     </div></div>
-    <div class="section"><div class="section-header"><h3>📦 Sayfa Ağırlığı</h3></div><div class="section-body">
+    <div class="section"><div class="section-header"><h3>📦 ${t("perfWeight")}</h3></div><div class="section-body">
       <div class="metric-grid">
-        <div class="metric-card ${perf.totalTransferKB>3000?"bad":perf.totalTransferKB>1500?"warn":"good"}"><div class="m-label">TRANSFER</div><div class="m-val">${perf.totalTransferKB}<span class="m-unit">KB</span></div><div class="m-status" style="color:${co(perf.totalTransferKB>3000?"bad":perf.totalTransferKB>1500?"warn":"good")}">&lt;1500 KB ideal</div></div>
-        <div class="metric-card"><div class="m-label">KAYNAK SAYISI</div><div class="m-val">${perf.totalResources}</div></div>
-        ${perf.renderBlocking>0?`<div class="metric-card bad"><div class="m-label">RENDER BLOCKING</div><div class="m-val">${perf.renderBlocking}</div><div class="m-status" style="color:#ff6b6b">Yavaşlatıyor</div></div>`:""}
-        ${perf.largestResource?`<div class="metric-card"><div class="m-label">EN BÜYÜK</div><div class="m-val" style="font-size:11px">${esc(perf.largestResource.name)}</div><div class="m-status" style="color:var(--text3)">${perf.largestResource.size}KB</div></div>`:""}
+        <div class="metric-card ${perf.totalTransferKB>3000?"bad":perf.totalTransferKB>1500?"warn":"good"}"><div class="m-label">${t("perfTransfer")}</div><div class="m-val">${perf.totalTransferKB}<span class="m-unit">KB</span></div><div class="m-status" style="color:${co(perf.totalTransferKB>3000?"bad":perf.totalTransferKB>1500?"warn":"good")}">${t("perfTransferIdeal")}</div></div>
+        <div class="metric-card"><div class="m-label">${t("perfResCount")}</div><div class="m-val">${perf.totalResources}</div></div>
+        ${perf.renderBlocking>0?`<div class="metric-card bad"><div class="m-label">${t("perfRenderBlock")}</div><div class="m-val">${perf.renderBlocking}</div><div class="m-status" style="color:#ff6b6b">${t("perfSlowing")}</div></div>`:""}
+        ${perf.largestResource?`<div class="metric-card"><div class="m-label">${t("perfLargest")}</div><div class="m-val" style="font-size:11px">${esc(perf.largestResource.name)}</div><div class="m-status" style="color:var(--text3)">${perf.largestResource.size}KB</div></div>`:""}
       </div>
     </div></div>
-    <div class="section"><div class="section-header" data-toggle-section="1"><h3>🔢 Kaynak Türleri</h3><span class="chevron">▼</span></div><div class="section-body">
-      ${resTypes.map(([t,c])=>`<div class="res-item"><span class="res-type">${t}</span><div class="res-bar-wrap"><div class="perf-bar"><div class="perf-bar-fill" style="width:${(c/maxR)*100}%;background:var(--accent2)"></div></div></div><span class="res-count">${c}</span></div>`).join("")||'<p style="color:var(--text3);font-size:12px">Veri yok.</p>'}
+    <div class="section"><div class="section-header" data-toggle-section="1"><h3>🔢 ${t("perfResTypes")}</h3><span class="chevron">▼</span></div><div class="section-body">
+      ${resTypes.map(([k,c])=>`<div class="res-item"><span class="res-type">${k}</span><div class="res-bar-wrap"><div class="perf-bar"><div class="perf-bar-fill" style="width:${(c/maxR)*100}%;background:var(--accent2)"></div></div></div><span class="res-count">${c}</span></div>`).join("")||`<p style="color:var(--text3);font-size:12px">${t("perfNoDataMsg")}</p>`}
     </div></div>`;
 }
 
@@ -978,26 +978,26 @@ function renderImages(images) {
   const noDim=images.filter(i=>!i.hasDimensions).length, oversized=images.filter(i=>i.isLargeDisplay).length;
 
   el.innerHTML = `
-    <div class="section"><div class="section-header"><h3>🖼️ Görsel Analizi</h3></div><div class="section-body">
+    <div class="section"><div class="section-header"><h3>🖼️ ${t("imagesTitle")}</h3></div><div class="section-body">
       <div class="metric-grid">
-        <div class="metric-card"><div class="m-label">TOPLAM</div><div class="m-val">${tot}</div></div>
-        <div class="metric-card ${withAlt===tot?"good":"bad"}"><div class="m-label">ALT VAR</div><div class="m-val">${withAlt}</div></div>
-        <div class="metric-card ${(tot-withAlt)===0?"good":"bad"}"><div class="m-label">ALT EKSİK</div><div class="m-val">${tot-withAlt}</div></div>
-        <div class="metric-card ${lazy>0?"good":""}"><div class="m-label">LAZY LOAD</div><div class="m-val">${lazy}</div></div>
-        <div class="metric-card ${noDim===0?"good":"warn"}"><div class="m-label">W/H EKSİK</div><div class="m-val">${noDim}</div></div>
-        ${oversized>0?`<div class="metric-card bad"><div class="m-label">2000px+</div><div class="m-val">${oversized}</div></div>`:""}
+        <div class="metric-card"><div class="m-label">${t("imagesTotal")}</div><div class="m-val">${tot}</div></div>
+        <div class="metric-card ${withAlt===tot?"good":"bad"}"><div class="m-label">${t("imagesAltOk")}</div><div class="m-val">${withAlt}</div></div>
+        <div class="metric-card ${(tot-withAlt)===0?"good":"bad"}"><div class="m-label">${t("imagesAltNo")}</div><div class="m-val">${tot-withAlt}</div></div>
+        <div class="metric-card ${lazy>0?"good":""}"><div class="m-label">${t("imagesLazy")}</div><div class="m-val">${lazy}</div></div>
+        <div class="metric-card ${noDim===0?"good":"warn"}"><div class="m-label">${t("imagesDimNo")}</div><div class="m-val">${noDim}</div></div>
+        ${oversized>0?`<div class="metric-card bad"><div class="m-label">${t("imagesOver")}</div><div class="m-val">${oversized}</div></div>`:""}
       </div>
-      ${noDim>0?'<div style="font-size:10px;color:var(--warn);margin-top:6px">⚠ width/height eksik görseller CLS sorununa yol açar.</div>':""}
+      ${noDim>0?`<div style="font-size:10px;color:var(--warn);margin-top:6px">${t("imagesDimWarn")}</div>`:""}
     </div></div>
-    <div class="section"><div class="section-header" data-toggle-section="1"><h3>📋 Görsel Listesi</h3><span class="badge" style="background:var(--bg3);color:var(--text2)">${Math.min(tot,60)}/${tot}</span><span class="chevron">▼</span></div><div class="section-body">
+    <div class="section"><div class="section-header" data-toggle-section="1"><h3>📋 ${t("imagesList")}</h3><span class="badge" style="background:var(--bg3);color:var(--text2)">${Math.min(tot,60)}/${tot}</span><span class="chevron">▼</span></div><div class="section-body">
       ${images.slice(0,60).map(img=>{
         const st=!img.hasAlt?"🔴":img.altEmpty?"🟡":"🟢";
-        const at=!img.hasAlt?"alt yok":img.altEmpty?"(boş)":img.alt;
+        const at=!img.hasAlt?t("imagesNoAlt"):img.altEmpty?t("imagesAltEmpty"):img.alt;
         const fn=img.src?.split("/").pop()?.split("?")[0]?.substring(0,40)||"?";
-        const dw=!img.hasDimensions?` <span style="color:var(--warn);font-size:9px">[w/h?]</span>`:"";
-        const ow=img.isLargeDisplay?` <span style="color:var(--danger);font-size:9px">[büyük]</span>`:"";
+        const dw=!img.hasDimensions?` <span style="color:var(--warn);font-size:9px">${t("imagesDimBadge")}</span>`:"";
+        const ow=img.isLargeDisplay?` <span style="color:var(--danger);font-size:9px">${t("imagesOverBadge")}</span>`:"";
         return `<div class="img-item"><span class="img-status">${st}</span><div class="img-info"><div class="img-src">${esc(fn)}${dw}${ow}</div><div class="img-alt ${!img.alt?"empty":""}">${esc(at)}</div></div></div>`;
-      }).join("")||'<p style="color:var(--text3);font-size:12px">Görsel yok.</p>'}
+      }).join("")||`<p style="color:var(--text3);font-size:12px">${t("imagesNone")}</p>`}
     </div></div>`;
 }
 
@@ -1011,28 +1011,28 @@ function renderLinks(links, broken) {
   let brokenBlock = broken
     ? (() => {
         const bad=Object.entries(broken).filter(([,r])=>!r.ok);
-        return `<div class="section"><div class="section-header" data-toggle-section="1"><h3>🔍 Broken Link</h3><span class="badge" style="background:${bad.length?"rgba(255,107,107,0.1)":"rgba(0,229,192,0.1)"};color:${bad.length?"#ff6b6b":"#00e5c0"}">${bad.length} sorun</span><span class="chevron">▼</span></div><div class="section-body">
-          ${bad.length===0?`<p style="color:var(--success);font-size:12px">✓ ${Object.keys(broken).length} linkte sorun yok.</p>`:bad.map(([url,r])=>`<div class="issue-item"><span class="issue-icon">🔴</span><div class="issue-body"><div class="issue-title">${r.error||`HTTP ${r.status}`}</div><div class="issue-desc" style="word-break:break-all">${esc(url.substring(0,80))}</div></div></div>`).join("")}
+        return `<div class="section"><div class="section-header" data-toggle-section="1"><h3>🔍 ${t("linksBrokenTitle")}</h3><span class="badge" style="background:${bad.length?"rgba(255,107,107,0.1)":"rgba(0,229,192,0.1)"};color:${bad.length?"#ff6b6b":"#00e5c0"}">${t("linksIssue",bad.length)}</span><span class="chevron">▼</span></div><div class="section-body">
+          ${bad.length===0?`<p style="color:var(--success);font-size:12px">${t("linksNoIssues",Object.keys(broken).length)}</p>`:bad.map(([url,r])=>`<div class="issue-item"><span class="issue-icon">🔴</span><div class="issue-body"><div class="issue-title">${r.error||`HTTP ${r.status}`}</div><div class="issue-desc" style="word-break:break-all">${esc(url.substring(0,80))}</div></div></div>`).join("")}
         </div></div>`;
       })()
-    : `<div class="section"><div class="section-header"><h3>🔍 Broken Link</h3></div><div class="section-body"><p style="font-size:11px;color:var(--text3)">Ayarlar sekmesinden limit belirleyin.</p></div></div>`;
+    : `<div class="section"><div class="section-header"><h3>🔍 ${t("linksBrokenTitle")}</h3></div><div class="section-body"><p style="font-size:11px;color:var(--text3)">${t("linksBrokenLimit")}</p></div></div>`;
 
-  const lRow = l => `<div class="link-item"><span class="link-badge ${l.nofollow?"nf":l.isInternal?"int":"ext"}">${l.nofollow?"NF":l.isInternal?"İÇ":"DIŞ"}</span><div style="flex:1;min-width:0"><div class="link-text">${esc(l.text)||'<i style="color:var(--text3)">Metin yok</i>'}</div><div class="link-url">${esc(l.href?.substring(0,65))}</div></div>${broken&&broken[l.href]?`<span class="tc-badge ${broken[l.href].ok?"ok":"fail"}">${broken[l.href].ok?"✓":broken[l.href].status||"✕"}</span>`:""}</div>`;
+  const lRow = l => `<div class="link-item"><span class="link-badge ${l.nofollow?"nf":l.isInternal?"int":"ext"}">${l.nofollow?t("linksBadgeNF"):l.isInternal?t("linksBadgeInt"):t("linksBadgeExt")}</span><div style="flex:1;min-width:0"><div class="link-text">${esc(l.text)||t("linksNoText")}</div><div class="link-url">${esc(l.href?.substring(0,65))}</div></div>${broken&&broken[l.href]?`<span class="tc-badge ${broken[l.href].ok?"ok":"fail"}">${broken[l.href].ok?"✓":broken[l.href].status||"✕"}</span>`:""}</div>`;
 
   el.innerHTML = `
-    <div class="section"><div class="section-header"><h3>🔗 Link Özeti</h3></div><div class="section-body">
+    <div class="section"><div class="section-header"><h3>🔗 ${t("linksTitle")}</h3></div><div class="section-body">
       <div class="link-stats">
-        <div class="link-stat"><div class="ls-val">${links.length}</div><div class="ls-label">Toplam</div></div>
-        <div class="link-stat"><div class="ls-val" style="color:var(--success)">${int.length}</div><div class="ls-label">İç</div></div>
-        <div class="link-stat"><div class="ls-val" style="color:var(--accent2)">${ext.length}</div><div class="ls-label">Dış</div></div>
+        <div class="link-stat"><div class="ls-val">${links.length}</div><div class="ls-label">${t("linksTotal")}</div></div>
+        <div class="link-stat"><div class="ls-val" style="color:var(--success)">${int.length}</div><div class="ls-label">${t("linksInt")}</div></div>
+        <div class="link-stat"><div class="ls-val" style="color:var(--accent2)">${ext.length}</div><div class="ls-label">${t("linksExt")}</div></div>
       </div>
-      ${nof.length>0?`<div class="row"><div class="row-body"><div class="row-label">Nofollow</div><div class="row-value warn">${nof.length}</div></div></div>`:""}
-      ${noT.length>0?`<div class="row"><div class="row-body"><div class="row-label">Anchor text yok</div><div class="row-value danger">${noT.length}</div></div></div>`:""}
-      ${dup.length>0?`<div class="row"><div class="row-body"><div class="row-label">Tekrar eden</div><div class="row-value warn">${dup.length}</div></div></div>`:""}
+      ${nof.length>0?`<div class="row"><div class="row-body"><div class="row-label">${t("linksNofollow")}</div><div class="row-value warn">${nof.length}</div></div></div>`:""}
+      ${noT.length>0?`<div class="row"><div class="row-body"><div class="row-label">${t("linksNoAnchor")}</div><div class="row-value danger">${noT.length}</div></div></div>`:""}
+      ${dup.length>0?`<div class="row"><div class="row-body"><div class="row-label">${t("linksDuplicate")}</div><div class="row-value warn">${dup.length}</div></div></div>`:""}
     </div></div>
     ${brokenBlock}
-    <div class="section"><div class="section-header" data-toggle-section="1"><h3>📎 İç Linkler</h3><span class="badge" style="background:rgba(0,229,192,0.1);color:var(--success)">${int.length}</span><span class="chevron">▼</span></div><div class="section-body">${int.slice(0,40).map(lRow).join("")||'<p style="color:var(--text3);font-size:12px">Yok.</p>'}</div></div>
-    <div class="section"><div class="section-header" data-toggle-section="1"><h3>🌐 Dış Linkler</h3><span class="badge" style="background:rgba(124,106,255,0.1);color:var(--accent2)">${ext.length}</span><span class="chevron">▼</span></div><div class="section-body">${ext.slice(0,40).map(lRow).join("")||'<p style="color:var(--text3);font-size:12px">Yok.</p>'}</div></div>`;
+    <div class="section"><div class="section-header" data-toggle-section="1"><h3>📎 ${t("linksIntTitle")}</h3><span class="badge" style="background:rgba(0,229,192,0.1);color:var(--success)">${int.length}</span><span class="chevron">▼</span></div><div class="section-body">${int.slice(0,40).map(lRow).join("")||`<p style="color:var(--text3);font-size:12px">${t("linksNone")}</p>`}</div></div>
+    <div class="section"><div class="section-header" data-toggle-section="1"><h3>🌐 ${t("linksExtTitle")}</h3><span class="badge" style="background:rgba(124,106,255,0.1);color:var(--accent2)">${ext.length}</span><span class="chevron">▼</span></div><div class="section-body">${ext.slice(0,40).map(lRow).join("")||`<p style="color:var(--text3);font-size:12px">${t("linksNone")}</p>`}</div></div>`;
 }
 
 // ─── SCHEMA ──────────────────────────────────────────────────────────────────
@@ -1040,12 +1040,12 @@ function renderLinks(links, broken) {
 function renderSchema(schemas) {
   const el = document.getElementById("panel-schema");
   el.innerHTML = `
-    <div class="section"><div class="section-header"><h3>🧩 JSON-LD</h3></div><div class="section-body">
-      ${schemas.length===0?`<div class="issue-item"><span class="issue-icon">🟡</span><div class="issue-body"><div class="issue-title">Schema markup bulunamadı</div><div class="issue-desc">Rich snippet'ler için JSON-LD ekleyin</div></div></div>`:
-      `<div style="margin-bottom:8px"><span class="tag good">✓ ${schemas.length} schema</span></div>`+schemas.map(s=>`<div class="schema-item"><div class="schema-type">{} ${esc(s.type)}</div><span class="schema-valid ${s.valid?"good":"bad"}">${s.valid?"✓ Geçerli":"✕ Hatalı"}</span><pre class="schema-raw">${esc(s.raw)}</pre></div>`).join("")}
+    <div class="section"><div class="section-header"><h3>🧩 ${t("schemaTitle")}</h3></div><div class="section-body">
+      ${schemas.length===0?`<div class="issue-item"><span class="issue-icon">🟡</span><div class="issue-body"><div class="issue-title">${t("schemaNotFound")}</div><div class="issue-desc">${t("schemaAddRich")}</div></div></div>`:
+      `<div style="margin-bottom:8px"><span class="tag good">✓ ${schemas.length} schema</span></div>`+schemas.map(s=>`<div class="schema-item"><div class="schema-type">{} ${esc(s.type)}</div><span class="schema-valid ${s.valid?"good":"bad"}">${s.valid?t("schemaValid"):t("schemaInvalid")}</span><pre class="schema-raw">${esc(s.raw)}</pre></div>`).join("")}
     </div></div>
-    <div class="section"><div class="section-header" data-toggle-section="1"><h3>💡 Önerilen Türler</h3><span class="chevron">▼</span></div><div class="section-body">
-      ${["Organization","WebSite","BreadcrumbList","Article","Product","FAQPage","LocalBusiness","Person","Event","Recipe","HowTo","Review","NewsArticle"].map(t=>{const h=schemas.some(s=>s.type?.includes(t));return`<div class="row"><div class="row-body"><div class="row-value ${h?"success":"missing"}">${h?"✓":"○"} ${t}</div></div></div>`;}).join("")}
+    <div class="section"><div class="section-header" data-toggle-section="1"><h3>💡 ${t("schemaSuggested")}</h3><span class="chevron">▼</span></div><div class="section-body">
+      ${["Organization","WebSite","BreadcrumbList","Article","Product","FAQPage","LocalBusiness","Person","Event","Recipe","HowTo","Review","NewsArticle"].map(tp=>{const h=schemas.some(s=>s.type?.includes(tp));return`<div class="row"><div class="row-body"><div class="row-value ${h?"success":"missing"}">${h?"✓":"○"} ${tp}</div></div></div>`;}).join("")}
     </div></div>`;
 }
 
@@ -1054,25 +1054,32 @@ function renderSchema(schemas) {
 function renderSocial(m) {
   const el = document.getElementById("panel-social");
   const domain = m.hostname || "";
-  const imgTag = (src, fb) => src ? `<img src="${esc(src)}" alt="" style="width:100%;height:100%;object-fit:cover" onerror="this.parentElement.innerHTML='<span class=sp-image-empty>${fb}</span>'">` : `<span class="sp-image-empty">${fb}</span>`;
+  const imgTag = (src, slot) => src ? `<img src="${esc(src)}" alt="" data-fallback-slot="${slot}" style="width:100%;height:100%;object-fit:cover">` : `<span class="sp-image-empty">${slot==="fb"?"🖼️":"🐦"}</span>`;
   const s1=[m.ogTitle,m.ogDesc,m.ogImage,m.ogType].filter(Boolean).length;
   const s2=[m.twitterCard,m.twitterTitle||m.ogTitle,m.twitterImage||m.ogImage].filter(Boolean).length;
 
   el.innerHTML = `
-    <div class="section"><div class="section-header"><h3>📊 Sosyal Skor</h3></div><div class="section-body">
+    <div class="section"><div class="section-header"><h3>📊 ${t("socialScore")}</h3></div><div class="section-body">
       <div class="metric-grid">
-        <div class="metric-card ${s1===4?"good":s1>=2?"warn":"bad"}"><div class="m-label">OPEN GRAPH</div><div class="m-val">${s1}<span class="m-unit">/4</span></div><div class="m-status" style="color:${s1===4?"#00e5c0":s1>=2?"#ffd166":"#ff6b6b"}">${s1===4?"Tam":"Eksik"}</div></div>
-        <div class="metric-card ${s2===3?"good":s2>=1?"warn":"bad"}"><div class="m-label">TWITTER</div><div class="m-val">${s2}<span class="m-unit">/3</span></div><div class="m-status" style="color:${s2===3?"#00e5c0":s2>=1?"#ffd166":"#ff6b6b"}">${s2===3?"Tam":"Eksik"}</div></div>
+        <div class="metric-card ${s1===4?"good":s1>=2?"warn":"bad"}"><div class="m-label">OPEN GRAPH</div><div class="m-val">${s1}<span class="m-unit">/4</span></div><div class="m-status" style="color:${s1===4?"#00e5c0":s1>=2?"#ffd166":"#ff6b6b"}">${s1===4?t("socialFull"):t("socialMissing")}</div></div>
+        <div class="metric-card ${s2===3?"good":s2>=1?"warn":"bad"}"><div class="m-label">TWITTER</div><div class="m-val">${s2}<span class="m-unit">/3</span></div><div class="m-status" style="color:${s2===3?"#00e5c0":s2>=1?"#ffd166":"#ff6b6b"}">${s2===3?t("socialFull"):t("socialMissing")}</div></div>
       </div>
     </div></div>
-    <div class="section"><div class="section-header"><h3>📘 Facebook Önizleme</h3></div><div class="section-body">
-      <div class="sp-card"><div class="sp-image">${imgTag(m.ogImage,"🖼️")}</div><div class="sp-body"><div class="sp-domain">${esc(domain.toUpperCase())}</div><div class="sp-title">${esc((m.ogTitle||m.title||"(başlık yok)").substring(0,90))}</div><div class="sp-desc">${esc((m.ogDesc||m.metaDesc||"").substring(0,150))}</div></div></div>
+    <div class="section"><div class="section-header"><h3>📘 ${t("socialFacebook")}</h3></div><div class="section-body">
+      <div class="sp-card"><div class="sp-image">${imgTag(m.ogImage,"fb")}</div><div class="sp-body"><div class="sp-domain">${esc(domain.toUpperCase())}</div><div class="sp-title">${esc((m.ogTitle||m.title||t("socialNoTitle")).substring(0,90))}</div><div class="sp-desc">${esc((m.ogDesc||m.metaDesc||"").substring(0,150))}</div></div></div>
       ${mRow("og:title",m.ogTitle)} ${mRow("og:description",m.ogDesc)} ${mRow("og:image",m.ogImage)} ${mRow("og:type",m.ogType)}
     </div></div>
-    <div class="section"><div class="section-header"><h3>🐦 Twitter Önizleme</h3></div><div class="section-body">
-      <div class="sp-card"><div class="sp-image">${imgTag(m.twitterImage||m.ogImage,"🐦")}</div><div class="sp-body"><div class="sp-title">${esc((m.twitterTitle||m.ogTitle||m.title||"").substring(0,90))}</div><div class="sp-desc">${esc((m.twitterDesc||m.ogDesc||m.metaDesc||"").substring(0,140))}</div><div class="sp-domain" style="margin-top:5px;font-size:10px;color:var(--text3)">🐦 ${esc(domain)}</div></div></div>
+    <div class="section"><div class="section-header"><h3>🐦 ${t("socialTwitter")}</h3></div><div class="section-body">
+      <div class="sp-card"><div class="sp-image">${imgTag(m.twitterImage||m.ogImage,"tw")}</div><div class="sp-body"><div class="sp-title">${esc((m.twitterTitle||m.ogTitle||m.title||"").substring(0,90))}</div><div class="sp-desc">${esc((m.twitterDesc||m.ogDesc||m.metaDesc||"").substring(0,140))}</div><div class="sp-domain" style="margin-top:5px;font-size:10px;color:var(--text3)">🐦 ${esc(domain)}</div></div></div>
       ${mRow("twitter:card",m.twitterCard)} ${mRow("twitter:title",m.twitterTitle)} ${mRow("twitter:description",m.twitterDesc)} ${mRow("twitter:image",m.twitterImage)}
     </div></div>`;
+
+  el.querySelectorAll("img[data-fallback-slot]").forEach(img => {
+    img.addEventListener("error", () => {
+      const fb = img.dataset.fallbackSlot === "fb" ? "🖼️" : "🐦";
+      img.parentElement.innerHTML = `<span class="sp-image-empty">${fb}</span>`;
+    });
+  });
 }
 
 // ─── ACCESSIBILITY ───────────────────────────────────────────────────────────
@@ -1080,20 +1087,20 @@ function renderSocial(m) {
 function renderAccessibility(a) {
   const el = document.getElementById("panel-a11y");
   const issues = [], warnings = [], goods = [];
-  if (a.imgsNoAlt>0) issues.push(`${a.imgsNoAlt} görselde alt attribute yok`);
-  else goods.push("Tüm görsellerde alt attribute var");
-  if (a.inputsNoLabel>0) issues.push(`${a.inputsNoLabel} form alanında label yok`);
-  else goods.push("Form alanları label'lı");
-  if (a.btnsNoText>0) warnings.push(`${a.btnsNoText} buton accessible text yok`);
-  if (!a.hasMain) warnings.push("<main> veya role=main tanımlı değil");
-  else goods.push("<main> landmark var");
-  if (!a.hasLang) issues.push("HTML lang attribute eksik");
-  else goods.push("HTML lang var");
-  if (!a.hasSkipNav) warnings.push("Skip navigation link yok");
-  else goods.push("Skip nav link var");
-  if (a.headingSkips>0) warnings.push(`${a.headingSkips} başlık seviye atlaması`);
-  else goods.push("Başlık sırası düzgün");
-  if (a.tabIndex>0) warnings.push(`${a.tabIndex} elemanda tabindex>0 (klavye sırası bozulabilir)`);
+  if (a.imgsNoAlt>0) issues.push(t("a11yAltMissing",a.imgsNoAlt));
+  else goods.push(t("a11yAltGood"));
+  if (a.inputsNoLabel>0) issues.push(t("a11yLabelMissing",a.inputsNoLabel));
+  else goods.push(t("a11yLabelGood"));
+  if (a.btnsNoText>0) warnings.push(t("a11yBtnNoText",a.btnsNoText));
+  if (!a.hasMain) warnings.push(t("a11yNoMain"));
+  else goods.push(t("a11yMainGood"));
+  if (!a.hasLang) issues.push(t("a11yLangMissing"));
+  else goods.push(t("a11yLangGood"));
+  if (!a.hasSkipNav) warnings.push(t("a11yNoSkipNav"));
+  else goods.push(t("a11ySkipNavGood"));
+  if (a.headingSkips>0) warnings.push(t("a11yHeadingSkips",a.headingSkips));
+  else goods.push(t("a11yHeadingGood"));
+  if (a.tabIndex>0) warnings.push(t("a11yTabIndex",a.tabIndex));
 
   const score = Math.max(0, 100 - issues.length*15 - warnings.length*8);
   const deg = Math.round(score*3.6);
@@ -1102,21 +1109,21 @@ function renderAccessibility(a) {
   const rows = (arr,icon) => arr.map(i=>`<div class="issue-item"><span class="issue-icon">${icon}</span><div class="issue-body"><div class="issue-title">${esc(i)}</div></div></div>`).join("");
 
   el.innerHTML = `
-    <div class="section"><div class="section-header"><h3>♿ Erişilebilirlik Skoru</h3></div><div class="section-body">
+    <div class="section"><div class="section-header"><h3>♿ ${t("a11yTitle")}</h3></div><div class="section-body">
       <div style="text-align:center;padding:10px 0">
         <div class="a11y-score-circle" style="background:conic-gradient(${sc} ${deg}deg,var(--bg3) ${deg}deg)"><span class="a11y-score-num" style="color:${sc}">${score}</span></div>
-        <div style="font-size:11px;color:var(--text2)">${score>=80?"İyi":"score>=50?Orta:Geliştirilmeli"}</div>
+        <div style="font-size:11px;color:var(--text2)">${score>=80?t("a11yGood"):score>=50?t("a11yAverage"):t("a11yNeedsWork")}</div>
       </div>
       <div class="metric-grid">
-        <div class="metric-card ${a.imgsNoAlt===0?"good":"bad"}"><div class="m-label">ALT EKSİK</div><div class="m-val">${a.imgsNoAlt}</div></div>
-        <div class="metric-card ${a.inputsNoLabel===0?"good":"bad"}"><div class="m-label">LABEL EKSİK</div><div class="m-val">${a.inputsNoLabel}</div></div>
-        <div class="metric-card ${a.btnsNoText===0?"good":"warn"}"><div class="m-label">BUTON TEXT</div><div class="m-val">${a.btnsNoText===0?"✓":"✗"}</div></div>
-        <div class="metric-card ${a.hasMain?"good":"warn"}"><div class="m-label">MAIN LANDMARK</div><div class="m-val">${a.hasMain?"✓":"✗"}</div></div>
+        <div class="metric-card ${a.imgsNoAlt===0?"good":"bad"}"><div class="m-label">${t("a11yNoAlt")}</div><div class="m-val">${a.imgsNoAlt}</div></div>
+        <div class="metric-card ${a.inputsNoLabel===0?"good":"bad"}"><div class="m-label">${t("a11yNoLabel")}</div><div class="m-val">${a.inputsNoLabel}</div></div>
+        <div class="metric-card ${a.btnsNoText===0?"good":"warn"}"><div class="m-label">${t("a11yBtnText")}</div><div class="m-val">${a.btnsNoText===0?"✓":"✗"}</div></div>
+        <div class="metric-card ${a.hasMain?"good":"warn"}"><div class="m-label">${t("a11yMainLand")}</div><div class="m-val">${a.hasMain?"✓":"✗"}</div></div>
       </div>
     </div></div>
-    <div class="section"><div class="section-header" data-toggle-section="1"><h3>🔴 Sorunlar</h3><span class="badge" style="background:rgba(255,107,107,0.1);color:#ff6b6b">${issues.length}</span><span class="chevron">▼</span></div><div class="section-body">${rows(issues,"🔴")||'<p style="color:var(--text3);font-size:12px">Sorun yok!</p>'}</div></div>
-    <div class="section"><div class="section-header" data-toggle-section="1"><h3>🟡 Uyarılar</h3><span class="badge" style="background:rgba(255,209,102,0.1);color:#ffd166">${warnings.length}</span><span class="chevron">▼</span></div><div class="section-body">${rows(warnings,"🟡")||'<p style="color:var(--text3);font-size:12px">Uyarı yok.</p>'}</div></div>
-    <div class="section"><div class="section-header" data-toggle-section="1"><h3>🟢 Başarılı</h3><span class="chevron">▼</span></div><div class="section-body">${rows(goods,"🟢")}</div></div>`;
+    <div class="section"><div class="section-header" data-toggle-section="1"><h3>🔴 ${t("a11yIssues")}</h3><span class="badge" style="background:rgba(255,107,107,0.1);color:#ff6b6b">${issues.length}</span><span class="chevron">▼</span></div><div class="section-body">${rows(issues,"🔴")||`<p style="color:var(--text3);font-size:12px">${t("a11yNoIssues")}</p>`}</div></div>
+    <div class="section"><div class="section-header" data-toggle-section="1"><h3>🟡 ${t("a11yWarnings")}</h3><span class="badge" style="background:rgba(255,209,102,0.1);color:#ffd166">${warnings.length}</span><span class="chevron">▼</span></div><div class="section-body">${rows(warnings,"🟡")||`<p style="color:var(--text3);font-size:12px">${t("a11yNoWarnings")}</p>`}</div></div>
+    <div class="section"><div class="section-header" data-toggle-section="1"><h3>🟢 ${t("a11yPassed")}</h3><span class="chevron">▼</span></div><div class="section-body">${rows(goods,"🟢")}</div></div>`;
 }
 
 // ─── HISTORY ─────────────────────────────────────────────────────────────────
@@ -1126,7 +1133,7 @@ async function renderHistory() {
   const { scanHistory = [] } = await chrome.storage.local.get("scanHistory");
 
   if (!scanHistory.length) {
-    el.innerHTML = `<div class="empty-state"><div class="icon">📜</div><h3>Geçmiş Yok</h3><p>Her tarama burada kaydedilir.</p></div>`;
+    el.innerHTML = `<div class="empty-state"><div class="icon">📜</div><h3>${t("historyEmpty")}</h3><p>${t("historyEmptyDesc")}</p></div>`;
     return;
   }
 
@@ -1134,19 +1141,19 @@ async function renderHistory() {
     const co = item.score>=80?"#00e5c0":item.score>=60?"#00e5c0":item.score>=40?"#ffd166":"#ff6b6b";
     const deg = Math.round(item.score*3.6);
     let domain = item.url; try { domain = new URL(item.url).hostname; } catch {}
-    const dt = new Date(item.timestamp).toLocaleString("tr-TR");
+    const dt = new Date(item.timestamp).toLocaleString(currentLang==="tr"?"tr-TR":"en-US");
     const isCur = i===0 && analysisData?.meta?.url===item.url;
     return `<div class="history-item">
       <div class="history-score" style="background:conic-gradient(${co} ${deg}deg,var(--bg3) ${deg}deg)">
         <div class="history-score-inner" style="color:${co}">${item.score}</div>
       </div>
       <div class="history-info">
-        <div class="history-url">${esc(domain)}${isCur?' <span style="color:var(--accent);font-size:9px">[şu an]</span>':""}</div>
+        <div class="history-url">${esc(domain)}${isCur?` <span style="color:var(--accent);font-size:9px">${t("historyCurrent")}</span>`:""}</div>
         <div class="history-date">${dt}</div>
       </div>
       <div class="history-counts">
-        <div style="font-size:10px;color:var(--danger)">${item.issues} hata</div>
-        <div style="font-size:10px;color:var(--warn)">${item.warnings} uyarı</div>
+        <div style="font-size:10px;color:var(--danger)">${t("historyErrors",item.issues)}</div>
+        <div style="font-size:10px;color:var(--warn)">${t("historyWarnings",item.warnings)}</div>
       </div>
     </div>`;
   }).join("");
@@ -1154,8 +1161,8 @@ async function renderHistory() {
   el.innerHTML = `
     <div class="section">
       <div class="section-header">
-        <h3>📜 Son ${scanHistory.length} Tarama</h3>
-        <button id="clear-hist" style="margin-left:auto;background:rgba(255,107,107,0.1);border:none;color:#ff6b6b;border-radius:4px;padding:2px 8px;font-size:10px;font-family:var(--mono);cursor:pointer">Temizle</button>
+        <h3>📜 ${t("historyTitle",scanHistory.length)}</h3>
+        <button id="clear-hist" style="margin-left:auto;background:rgba(255,107,107,0.1);border:none;color:#ff6b6b;border-radius:4px;padding:2px 8px;font-size:10px;font-family:var(--mono);cursor:pointer">${t("historyClear")}</button>
       </div>
       <div class="section-body">${rows}</div>
     </div>`;
@@ -1180,7 +1187,7 @@ function renderTools(url) {
     {name:"Twitter Card Validator",icon:"🐦",url:"https://cards-dev.twitter.com/validator"},
     {name:"Schema.org Validator",icon:"🧩",url:`https://validator.schema.org/#url=${enc}`},
     {name:"W3C HTML Validator",icon:"✅",url:`https://validator.w3.org/nu/?doc=${enc}`},
-    {name:"GTmetrix Hız Testi",icon:"⚡",url:`https://gtmetrix.com/?url=${enc}`},
+    {name:t("toolGTmetrix"),icon:"⚡",url:`https://gtmetrix.com/?url=${enc}`},
     {name:"Ahrefs SEO Checker",icon:"🔗",url:`https://ahrefs.com/seo-checker?input=${enc}`},
     {name:"Screaming Frog",icon:"🐸",url:"https://www.screamingfrog.co.uk/seo-spider/"},
     {name:"SSL Checker",icon:"🔒",url:`https://www.ssllabs.com/ssltest/analyze.html?d=${enc}`},
@@ -1189,7 +1196,7 @@ function renderTools(url) {
   ];
 
   el.innerHTML = `
-    <div class="section"><div class="section-header"><h3>🛠️ SEO Araçları</h3></div><div class="section-body">
+    <div class="section"><div class="section-header"><h3>🛠️ ${t("toolsTitle")}</h3></div><div class="section-body">
       ${url?`<div style="font-size:10px;color:var(--text3);font-family:var(--mono);margin-bottom:8px;word-break:break-all">${esc(url.substring(0,60))}</div>`:""}
       ${tools.map(t=>`<div class="tool-item" data-url="${esc(t.url)}"><span style="font-size:15px">${t.icon}</span><span class="tool-name">${esc(t.name)}</span><span class="tool-arrow">→</span></div>`).join("")}
     </div></div>`;
@@ -1205,39 +1212,39 @@ function exportReport() {
   if (!analysisData) return;
   const m = analysisData.meta;
   const score = calcScore(analysisData, perfData, techData);
-  const psiLine = psiData&&!psiData.error ? `  PSI Perf: ${psiData.scores.performance} | SEO: ${psiData.scores.seo} | BP: ${psiData.scores.bestPractices}` : "  PSI: API key girilmedi";
+  const psiLine = psiData&&!psiData.error ? `  PSI Perf: ${psiData.scores.performance} | SEO: ${psiData.scores.seo} | BP: ${psiData.scores.bestPractices}` : t("exportPSINo");
   const lines = [
     "═══════════════════════════════════",
-    "      SEO LENS v2.1 RAPORU",
+    `      ${t("exportReportTitle")}`,
     "═══════════════════════════════════",
-    `Tarih  : ${new Date().toLocaleString("tr-TR")}`,
-    `URL    : ${m.url}`,
-    `Skor   : ${score.pct}/100 (${score.label})`,
+    `${t("exportDate")} ${new Date().toLocaleString(currentLang==="tr"?"tr-TR":"en-US")}`,
+    `${t("exportURL")} ${m.url}`,
+    `${t("exportScore")} ${score.pct}/100 (${score.label})`,
     psiLine,
     "",
-    "─── HATALAR ───────────────────────",
+    t("exportErrors"),
     ...score.issues.map(i=>`  ✕ ${i}`),
     "",
-    "─── UYARILAR ──────────────────────",
+    t("exportWarnings"),
     ...score.warnings.map(i=>`  ⚠ ${i}`),
     "",
-    "─── META ──────────────────────────",
-    `  Başlık    : ${m.title} (${m.titleLength}kr)`,
-    `  Açıklama  : ${m.metaDesc?.substring(0,80)} (${m.metaDescLength}kr)`,
-    `  Canonical : ${m.canonical||"(yok)"}${m.canonicalIsSelf?" [self]":m.canonicalIsExternal?" [HARİCİ!]":""}`,
-    `  HTTPS     : ${m.hasHttps?"✓":"✗"} | noindex: ${analysisData.technical?.noindex?"EVET!":"Hayır"}`,
+    t("exportMetaSection"),
+    `  ${t("exportTitleLabel")} ${m.title} (${m.titleLength}ch)`,
+    `  ${t("exportDescLabel")} ${m.metaDesc?.substring(0,80)} (${m.metaDescLength}ch)`,
+    `  ${t("exportCanonLabel")} ${m.canonical||"(—)"}${m.canonicalIsSelf?" [self]":m.canonicalIsExternal?` ${t("exportExternal")}`:""}`,
+    `  ${t("exportHTTPSLabel")} ${m.hasHttps?"✓":"✗"} | ${t("exportNoindexLabel")} ${analysisData.technical?.noindex?t("exportYes"):t("exportNo")}`,
     "",
-    "─── İÇERİK ────────────────────────",
-    `  Kaynak: <${analysisData.content?.contentAreaUsed}> | ${analysisData.content?.wordCount} kelime | ~${analysisData.content?.readingTimeMin}dk`,
+    t("exportContentSection"),
+    `  ${t("exportSource",analysisData.content?.contentAreaUsed,analysisData.content?.wordCount,analysisData.content?.readingTimeMin)}`,
     "",
-    "─── TEKNİK ────────────────────────",
-    `  robots.txt : ${techData?.robotsTxt?.accessible?"✓":"✗"}${techData?.robotsTxt?.pageDisallowed?" ⚠ SAYFA ENGELLENMİŞ":""}`,
-    `  sitemap.xml: ${techData?.sitemapXml?.accessible?"✓":"✗"}`,
-    `  Favicon    : ${analysisData.technical?.favicon?"✓":"✗"}`,
-    `  HTTP Durum : ${headersData?.status||"?"}${headersData?.redirected?" (yönlendirme var)":""}`,
+    t("exportTechSection"),
+    `  ${t("exportRobots")} ${techData?.robotsTxt?.accessible?"✓":"✗"}${techData?.robotsTxt?.pageDisallowed?" "+t("exportPageBlocked"):""}`,
+    `  ${t("exportSitemap")} ${techData?.sitemapXml?.accessible?"✓":"✗"}`,
+    `  ${t("exportFavicon")} ${analysisData.technical?.favicon?"✓":"✗"}`,
+    `  ${t("exportHTTPStatus")} ${headersData?.status||"?"}${headersData?.redirected?" ("+t("exportRedirect")+")":""}`,
     "",
     "═══════════════════════════════════",
-    "SEO Lens Chrome Eklentisi",
+    t("exportFooter"),
   ].join("\n");
 
   navigator.clipboard.writeText(lines).then(() => {

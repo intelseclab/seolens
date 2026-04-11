@@ -268,7 +268,7 @@
     <p id="page-url">Hazır</p>
   </div>
   <button class="export-btn" id="export-btn" title="Raporu panoya kopyala">⬇</button>
-  <button class="scan-btn" id="scan-btn">TARA</button>
+  <button class="scan-btn" id="scan-btn">SCAN</button>
 </div>
 
 <!-- SCORE BAR -->
@@ -288,22 +288,22 @@
 
 <!-- TABS -->
 <div class="tabs" id="tabs-bar" style="display:none">
-  <button class="tab active" data-panel="overview"><span class="tab-icon">📊</span>Özet</button>
+  <button class="tab active" data-panel="overview"><span class="tab-icon">📊</span>Overview</button>
   <button class="tab" data-panel="serp"><span class="tab-icon">🔍</span>SERP</button>
-  <button class="tab" data-panel="keyword"><span class="tab-icon">🔑</span>Kelime</button>
-  <button class="tab" data-panel="technical"><span class="tab-icon">⚙️</span>Teknik</button>
+  <button class="tab" data-panel="keyword"><span class="tab-icon">🔑</span>Keyword</button>
+  <button class="tab" data-panel="technical"><span class="tab-icon">⚙️</span>Technical</button>
   <button class="tab" data-panel="meta"><span class="tab-icon">🏷️</span>Meta</button>
-  <button class="tab" data-panel="content"><span class="tab-icon">📄</span>İçerik</button>
-  <button class="tab" data-panel="headings"><span class="tab-icon">📝</span>Başlık</button>
-  <button class="tab" data-panel="perf"><span class="tab-icon">⚡</span>Hız</button>
-  <button class="tab" data-panel="images"><span class="tab-icon">🖼️</span>Görsel</button>
-  <button class="tab" data-panel="links"><span class="tab-icon">🔗</span>Link</button>
-  <button class="tab" data-panel="schema"><span class="tab-icon">🧩</span>Şema</button>
-  <button class="tab" data-panel="social"><span class="tab-icon">📱</span>Sosyal</button>
+  <button class="tab" data-panel="content"><span class="tab-icon">📄</span>Content</button>
+  <button class="tab" data-panel="headings"><span class="tab-icon">📝</span>Headings</button>
+  <button class="tab" data-panel="perf"><span class="tab-icon">⚡</span>Speed</button>
+  <button class="tab" data-panel="images"><span class="tab-icon">🖼️</span>Images</button>
+  <button class="tab" data-panel="links"><span class="tab-icon">🔗</span>Links</button>
+  <button class="tab" data-panel="schema"><span class="tab-icon">🧩</span>Schema</button>
+  <button class="tab" data-panel="social"><span class="tab-icon">📱</span>Social</button>
   <button class="tab" data-panel="a11y"><span class="tab-icon">♿</span>A11y</button>
-  <button class="tab" data-panel="history"><span class="tab-icon">📜</span>Geçmiş</button>
-  <button class="tab" data-panel="tools"><span class="tab-icon">🛠️</span>Araçlar</button>
-  <button class="tab" data-panel="settings"><span class="tab-icon">⚙</span>Ayar</button>
+  <button class="tab" data-panel="history"><span class="tab-icon">📜</span>History</button>
+  <button class="tab" data-panel="tools"><span class="tab-icon">🛠️</span>Tools</button>
+  <button class="tab" data-panel="settings"><span class="tab-icon">⚙</span>Settings</button>
 </div>
 
 <!-- PANELS -->
@@ -312,8 +312,8 @@
   <div class="panel active" id="panel-empty">
     <div class="empty-state">
       <div class="icon">🔍</div>
-      <h3>SEO Analizi Başlatın</h3>
-      <p>Aktif sayfanın SEO sağlığını analiz etmek için <strong>TARA</strong> butonuna tıklayın.</p>
+      <h3>Start SEO Analysis</h3>
+      <p>Click the <strong>SCAN</strong> button to analyze the SEO health of the active page.</p>
     </div>
   </div>
 
@@ -327,7 +327,7 @@
   <div class="panel" id="panel-error">
     <div class="empty-state">
       <div class="icon">⚠️</div>
-      <h3>Tarama Başarısız</h3>
+      <h3>Scan Failed</h3>
       <p id="error-msg">Bilinmeyen hata.</p>
     </div>
   </div>
@@ -348,53 +348,12 @@
   <div class="panel" id="panel-history"></div>
   <div class="panel" id="panel-tools"></div>
 
-  <!-- SETTINGS -->
-  <div class="panel" id="panel-settings">
-    <div class="section">
-      <div class="section-header"><h3>🚀 PageSpeed Insights API</h3></div>
-      <div class="section-body">
-        <div class="row"><div class="row-body">
-          <div class="row-label">API Key</div>
-          <input id="psi-key-input" type="password" placeholder="AIza..." style="width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:6px;padding:7px 10px;color:var(--text);font-family:var(--mono);font-size:11px;outline:none;margin-top:4px" />
-          <div style="font-size:10px;color:var(--text3);margin-top:5px">Google Cloud Console → PageSpeed Insights API'den ücretsiz alın.</div>
-        </div></div>
-        <button id="save-psi-key" style="margin-top:10px;width:100%;background:var(--accent);color:#000;border:none;border-radius:7px;padding:8px;font-family:var(--mono);font-size:11px;font-weight:700;cursor:pointer">KAYDET</button>
-        <div id="psi-key-status" style="font-size:11px;color:var(--text3);margin-top:6px;text-align:center"></div>
-      </div>
-    </div>
-    <div class="section">
-      <div class="section-header"><h3>🔗 Broken Link Checker</h3></div>
-      <div class="section-body">
-        <div class="row"><div class="row-body">
-          <div class="row-label">Kontrol edilecek maksimum dış link</div>
-          <select id="link-check-limit" style="width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:6px;padding:7px 10px;color:var(--text);font-family:var(--mono);font-size:11px;outline:none;margin-top:4px">
-            <option value="0">Kapalı</option>
-            <option value="10">10 link</option>
-            <option value="20" selected>20 link</option>
-            <option value="50">50 link</option>
-          </select>
-        </div></div>
-      </div>
-    </div>
-    <div class="section">
-      <div class="section-header"><h3>ℹ️ Hakkında</h3></div>
-      <div class="section-body">
-        <div style="font-size:11px;color:var(--text2);line-height:1.8">
-          <b style="color:var(--text)">SEO Lens v2.1</b><br>
-          <b style="color:var(--text)">Veri kaynakları:</b><br>
-          • DOM analizi (anlık, her taramada)<br>
-          • Performance API (tarayıcı lab verisi)<br>
-          • PageSpeed Insights API (opsiyonel, CrUX)<br>
-          • robots.txt / sitemap.xml (HTTP fetch)<br>
-          • HTTP headers analizi (HEAD isteği)<br>
-          • Broken link kontrolü (HEAD isteği)
-        </div>
-      </div>
-    </div>
-  </div>
+  <!-- SETTINGS — rendered by renderSettings() in i18n.js -->
+  <div class="panel" id="panel-settings"></div>
 
 </div>
 
+<script src="i18n.js"></script>
 <script src="sidepanel.js"></script>
 </body>
 </html>
